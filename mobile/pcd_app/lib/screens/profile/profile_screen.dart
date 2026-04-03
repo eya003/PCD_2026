@@ -11,16 +11,26 @@ class ProfileScreen extends StatelessWidget {
     required this.email,
     required this.userId,
     required this.role,
+    required this.firstName,
+    required this.lastName,
     required this.onLogout,
   });
 
   final String email;
   final int userId;
   final UserRole role;
+  final String firstName;
+  final String lastName;
   final Future<void> Function() onLogout;
 
   @override
   Widget build(BuildContext context) {
+    final fullName = '${firstName.trim()} ${lastName.trim()}'.trim();
+    final displayName = fullName.isNotEmpty ? 'Dr. $fullName' : 'Docteur';
+    final initial = firstName.trim().isNotEmpty
+        ? firstName.trim().substring(0, 1).toUpperCase()
+        : (email.trim().isNotEmpty ? email.trim().substring(0, 1).toUpperCase() : 'D');
+
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
@@ -31,11 +41,7 @@ class ProfileScreen extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 24,
-                  child: Text(
-                    email.trim().isEmpty
-                        ? 'D'
-                        : email.trim().substring(0, 1).toUpperCase(),
-                  ),
+                  child: Text(initial),
                 ),
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
@@ -43,16 +49,13 @@ class ProfileScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        role == UserRole.doctor
-                            ? 'Profil medecin'
-                            : 'Profil famille',
+                        displayName,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
                       ),
                       const SizedBox(height: AppSpacing.xs),
                       Text(email),
-                      Text('User ID: $userId'),
                     ],
                   ),
                 ),

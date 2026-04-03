@@ -10,7 +10,10 @@ import '../../models/status_type.dart';
 import '../../models/user_role.dart';
 import '../../services/appointments_service.dart';
 import '../../services/treatments_service.dart';
+import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../utils/prescription_print_models.dart';
+import '../../utils/prescription_printer.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/section_card.dart';
 import '../../widgets/status_badge.dart';
@@ -66,7 +69,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
       if (!mounted) return;
       setState(() => _currentRole = role);
     } catch (_) {
-      // Role will be set by _loadTreatments() if it succeeds.
+      // Role fallback comes from _loadTreatments() when available.
     }
   }
 
@@ -85,11 +88,10 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
         patientId: widget.patient.id,
         patientsById: {widget.patient.id: widget.patient},
       );
-      final patientAppointments = appointments;
 
       if (!mounted) return;
       setState(() {
-        _appointments = patientAppointments;
+        _appointments = appointments;
         _isLoadingAppointments = false;
       });
     } on AppointmentsException catch (e) {
@@ -181,7 +183,6 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
         ),
       ),
     );
-
     if (!mounted) return;
     if (updated == true) {
       _notifyAppointmentsChanged();
@@ -324,10 +325,10 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
   }
 
   Future<void> _openAddAllergyDialog() async {
+    final formKey = GlobalKey<FormState>();
     final allergenController = TextEditingController();
     final reactionController = TextEditingController();
     final notesController = TextEditingController();
-    String? allergenErrorText;
     var severity = PatientAllergy.severityModerate;
 
     final payload = await showDialog<_AllergyDialogPayload>(
@@ -335,103 +336,124 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocalState) {
-            return AlertDialog(
-              title: const Text('Ajouter allergie'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: allergenController,
-                      onChanged: (_) {
-                        if (allergenErrorText == null) return;
-                        if (allergenController.text.trim().isEmpty) return;
-                        setLocalState(() => allergenErrorText = null);
-                      },
-                      decoration: InputDecoration(
-                        labelText: 'Substance / medicament',
-                        prefixIcon: const Icon(Icons.warning_amber_outlined),
-                        errorText: allergenErrorText,
+            return Dialog(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.lg),
+                  child: Form(
+                    key: formKey,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Ajouter allergie',
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          TextFormField(
+                            controller: allergenController,
+                            decoration: const InputDecoration(
+                              labelText: 'Allergene',
+                              prefixIcon: Icon(Icons.warning_amber_outlined),
+                            ),
+                            validator: (value) {
+                              if ((value ?? '').trim().isEmpty) {
+                                return 'Allergene obligatoire';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          TextFormField(
+                            controller: reactionController,
+                            decoration: const InputDecoration(
+                              labelText: 'Reaction',
+                              prefixIcon: Icon(Icons.healing_outlined),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          DropdownButtonFormField<String>(
+                            value: severity,
+                            items: const [
+                              DropdownMenuItem(
+                                value: PatientAllergy.severityLow,
+                                child: Text('Faible'),
+                              ),
+                              DropdownMenuItem(
+                                value: PatientAllergy.severityModerate,
+                                child: Text('Moderee'),
+                              ),
+                              DropdownMenuItem(
+                                value: PatientAllergy.severityHigh,
+                                child: Text('Elevee'),
+                              ),
+                              DropdownMenuItem(
+                                value: PatientAllergy.severityCritical,
+                                child: Text('Critique'),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              if (value == null) return;
+                              setLocalState(() => severity = value);
+                            },
+                            decoration: const InputDecoration(
+                              labelText: 'Severite',
+                              prefixIcon: Icon(Icons.report_problem_outlined),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          TextFormField(
+                            controller: notesController,
+                            minLines: 2,
+                            maxLines: 4,
+                            decoration: const InputDecoration(
+                              labelText: 'Notes',
+                              alignLabelWithHint: true,
+                              prefixIcon: Icon(Icons.note_alt_outlined),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.lg),
+                          Wrap(
+                            alignment: WrapAlignment.end,
+                            spacing: AppSpacing.sm,
+                            runSpacing: AppSpacing.sm,
+                            children: [
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text('Annuler'),
+                              ),
+                              FilledButton.icon(
+                                onPressed: () {
+                                  if (!(formKey.currentState?.validate() ??
+                                      false)) {
+                                    return;
+                                  }
+                                  Navigator.of(context).pop(
+                                    _AllergyDialogPayload(
+                                      allergen:
+                                          allergenController.text.trim(),
+                                      reaction:
+                                          reactionController.text.trim(),
+                                      severity: severity,
+                                      notes: notesController.text.trim(),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.add),
+                                label: const Text('Ajouter'),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.sm),
-                    TextField(
-                      controller: reactionController,
-                      decoration: const InputDecoration(
-                        labelText: 'Reaction',
-                        prefixIcon: Icon(Icons.healing_outlined),
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    DropdownButtonFormField<String>(
-                      value: severity,
-                      items: const [
-                        DropdownMenuItem(
-                          value: PatientAllergy.severityLow,
-                          child: Text('Faible'),
-                        ),
-                        DropdownMenuItem(
-                          value: PatientAllergy.severityModerate,
-                          child: Text('Moderee'),
-                        ),
-                        DropdownMenuItem(
-                          value: PatientAllergy.severityHigh,
-                          child: Text('Elevee'),
-                        ),
-                        DropdownMenuItem(
-                          value: PatientAllergy.severityCritical,
-                          child: Text('Critique'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setLocalState(() => severity = value);
-                      },
-                      decoration: const InputDecoration(
-                        labelText: 'Severite',
-                        prefixIcon: Icon(Icons.report_problem_outlined),
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    TextField(
-                      controller: notesController,
-                      minLines: 2,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Notes',
-                        alignLabelWithHint: true,
-                        prefixIcon: Icon(Icons.note_alt_outlined),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Annuler'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final allergen = allergenController.text.trim();
-                    if (allergen.isEmpty) {
-                      setLocalState(
-                        () => allergenErrorText = 'Substance obligatoire',
-                      );
-                      return;
-                    }
-                    Navigator.of(context).pop(
-                      _AllergyDialogPayload(
-                        allergen: allergen,
-                        reaction: reactionController.text.trim(),
-                        severity: severity,
-                        notes: notesController.text.trim(),
-                      ),
-                    );
-                  },
-                  child: const Text('Ajouter'),
-                ),
-              ],
             );
           },
         );
@@ -464,6 +486,95 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     }
   }
 
+  Future<void> _openPrescriptionDetails(Prescription prescription) async {
+    final medications = _medicationsForPrescription(prescription.id);
+    final doctorName =
+        _doctorNameForId(prescription.doctorId) ??
+        'Medecin #${prescription.doctorId}';
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _PrescriptionDetailsDialog(
+        prescription: prescription,
+        medications: medications,
+        patient: widget.patient,
+        doctorName: doctorName,
+        canPrint: _isDoctor,
+        onPrint: () => _printPrescriptionDetails(prescription, medications),
+        formatDate: _formatDate,
+      ),
+    );
+  }
+
+  Future<void> _openMedicationDetails({
+    required Medication medication,
+    Prescription? prescription,
+    MedicationIntake? latestIntake,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _MedicationDetailsDialog(
+        medication: medication,
+        prescription: prescription,
+        latestIntake: latestIntake,
+        prescriberName: _doctorNameForId(medication.doctorId),
+        formatDate: _formatDate,
+        formatDateTime: _formatDateTime,
+      ),
+    );
+  }
+
+  Future<void> _printPrescriptionDetails(
+    Prescription prescription,
+    List<Medication> medications,
+  ) async {
+    final doctorName =
+        _doctorNameForId(prescription.doctorId) ??
+        'Medecin #${prescription.doctorId}';
+    final payload = PrescriptionPrintPayload(
+      doctorDisplayName: _formatDoctorForPrint(doctorName),
+      patientFullName: widget.patient.fullName,
+      patientCode: widget.patient.code,
+      patientCin: widget.patient.cin,
+      patientAgeLabel: '${widget.patient.age} ans',
+      prescriptionNumber: '#${prescription.id}',
+      prescriptionDate: _formatDate(prescription.prescriptionDate),
+      prescriptionStatus: prescription.statusLabelFr,
+      prescriptionNotes: prescription.notes,
+      medications: medications
+          .map(
+            (item) => PrescriptionPrintMedication(
+              name: item.name,
+              dosage: item.dosage,
+              frequency: item.frequency,
+              quantity: item.quantity,
+              period: item.period,
+              form: item.form,
+              startDate: _formatDate(item.startDate),
+              endDate: item.endDate == null ? null : _formatDate(item.endDate!),
+              instructions: item.instructions,
+            ),
+          )
+          .toList(),
+    );
+
+    final printed = await printPrescription(payload);
+    if (!mounted) return;
+    if (!printed) {
+      _showSnackBar(
+        'Impression indisponible sur cette plateforme. Utilisez la version web.',
+      );
+    }
+  }
+
+  String _formatDoctorForPrint(String name) {
+    final clean = name.trim();
+    if (clean.toLowerCase().startsWith('dr')) {
+      return clean;
+    }
+    return 'Dr. $clean';
+  }
+
   void _notifyAppointmentsChanged() {
     final notifier = widget.appointmentsRevision;
     if (notifier == null) return;
@@ -484,14 +595,14 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     }
   }
 
-  Color _appointmentStatusColor(String status, BuildContext context) {
+  Color _appointmentStatusColor(String status) {
     switch (AppointmentItem.normalizeStatus(status)) {
       case AppointmentItem.statusDone:
         return Colors.green.shade700;
       case AppointmentItem.statusCancelled:
         return Colors.orange.shade700;
       case AppointmentItem.statusMissed:
-        return Colors.red.shade700;
+        return AppColors.statusRed;
       case AppointmentItem.statusScheduled:
       default:
         return Theme.of(context).colorScheme.primary;
@@ -499,13 +610,21 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
   }
 
   BadgeTone _medicationBadgeTone(Medication medication) {
-    if (medication.isCompleted) {
-      return BadgeTone.success;
-    }
-    if (medication.isCancelled) {
-      return BadgeTone.warning;
-    }
+    if (medication.isCompleted) return BadgeTone.success;
+    if (medication.isCancelled) return BadgeTone.warning;
     return BadgeTone.primary;
+  }
+
+  BadgeTone _prescriptionBadgeTone(Prescription prescription) {
+    switch (prescription.normalizedStatus) {
+      case Prescription.statusCompleted:
+        return BadgeTone.success;
+      case Prescription.statusCancelled:
+        return BadgeTone.warning;
+      case Prescription.statusActive:
+      default:
+        return BadgeTone.primary;
+    }
   }
 
   String _formatDate(DateTime date) {
@@ -527,6 +646,33 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     return _doctorNamesById[doctorId] ?? 'Medecin #$doctorId';
   }
 
+  Map<int, Medication> _allMedicationsById() {
+    final merged = <int, Medication>{};
+    for (final item in [..._activeMedications, ..._archivedMedications]) {
+      merged[item.id] = item;
+    }
+    return merged;
+  }
+
+  List<Medication> _medicationsForPrescription(int prescriptionId) {
+    final medications = _allMedicationsById().values
+        .where((item) => item.prescriptionId == prescriptionId)
+        .toList()
+      ..sort((a, b) => b.startDate.compareTo(a.startDate));
+    return medications;
+  }
+
+  Map<int, MedicationIntake> _latestIntakesByMedication() {
+    final latest = <int, MedicationIntake>{};
+    for (final intake in _medicationIntakes) {
+      final existing = latest[intake.medicationId];
+      if (existing == null || intake.takenAt.isAfter(existing.takenAt)) {
+        latest[intake.medicationId] = intake;
+      }
+    }
+    return latest;
+  }
+
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -538,6 +684,15 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     final prescriptionsById = {
       for (final prescription in _prescriptions) prescription.id: prescription,
     };
+    final medicationById = _allMedicationsById();
+    final medicationsByPrescription = <int, List<Medication>>{};
+    for (final medication in medicationById.values) {
+      final prescriptionId = medication.prescriptionId;
+      if (prescriptionId == null) continue;
+      medicationsByPrescription
+          .putIfAbsent(prescriptionId, () => <Medication>[])
+          .add(medication);
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Fiche patient')),
@@ -547,33 +702,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
           child: ListView(
             padding: const EdgeInsets.all(AppSpacing.md),
             children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.patient.fullName,
-                        style: Theme.of(context).textTheme.headlineMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: AppSpacing.xs),
-                      Row(
-                        children: [
-                          Text('ID: ${widget.patient.code}'),
-                          const SizedBox(width: AppSpacing.sm),
-                          Text('Age: ${widget.patient.age} ans'),
-                          const SizedBox(width: AppSpacing.sm),
-                          StatusBadge(label: widget.patient.status.label),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text('CIN: ${widget.patient.cin}'),
-                    ],
-                  ),
-                ),
-              ),
+              _buildPatientHeaderCard(),
               const SizedBox(height: AppSpacing.md),
               SectionCard(
                 title: 'Traitements',
@@ -591,6 +720,14 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
               const SizedBox(height: AppSpacing.md),
               SectionCard(
                 title: 'Historique medical',
+                child: _buildHistorySection(
+                  prescriptionsById: prescriptionsById,
+                  medicationsByPrescription: medicationsByPrescription,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              SectionCard(
+                title: 'Allergies',
                 action: _isDoctor
                     ? TextButton.icon(
                         onPressed: _openAddAllergyDialog,
@@ -598,7 +735,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
                         label: const Text('Ajouter allergie'),
                       )
                     : null,
-                child: _buildHistorySection(),
+                child: _buildAllergiesSection(),
               ),
               const SizedBox(height: AppSpacing.md),
               SectionCard(
@@ -615,10 +752,75 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
               const SizedBox(height: AppSpacing.md),
               SectionCard(
                 title: 'Suivi des prises',
-                child: _buildIntakesSection(),
+                child: _buildIntakesSection(medicationById: medicationById),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPatientHeaderCard() {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryBlue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.person_outline_rounded,
+                    color: AppColors.primaryBlue,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.patient.fullName,
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Wrap(
+                        spacing: AppSpacing.xs,
+                        runSpacing: AppSpacing.xs,
+                        children: [
+                          StatusBadge(label: widget.patient.status.label),
+                          _HeaderFactChip(
+                            icon: Icons.badge_outlined,
+                            text: 'ID ${widget.patient.code}',
+                          ),
+                          _HeaderFactChip(
+                            icon: Icons.cake_outlined,
+                            text: '${widget.patient.age} ans',
+                          ),
+                          _HeaderFactChip(
+                            icon: Icons.credit_card_outlined,
+                            text: 'CIN ${widget.patient.cin}',
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -628,10 +830,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     required Map<int, Prescription> prescriptionsById,
   }) {
     if (_isLoadingTreatments) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return const _LoadingList(itemCount: 3);
     }
 
     if (_treatmentsError != null) {
@@ -650,27 +849,28 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
       );
     }
 
-    final latestIntakeByMedication = <int, MedicationIntake>{};
-    for (final intake in _medicationIntakes) {
-      final existing = latestIntakeByMedication[intake.medicationId];
-      if (existing == null || intake.takenAt.isAfter(existing.takenAt)) {
-        latestIntakeByMedication[intake.medicationId] = intake;
-      }
-    }
+    final latestIntakes = _latestIntakesByMedication();
 
     return Column(
       children: _activeMedications
           .map(
             (medication) => Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-              child: _MedicationListTile(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: _MedicationOverviewCard(
                 medication: medication,
                 prescription: medication.prescriptionId == null
                     ? null
                     : prescriptionsById[medication.prescriptionId],
-                latestIntake: latestIntakeByMedication[medication.id],
+                latestIntake: latestIntakes[medication.id],
                 prescriberName: _doctorNameForId(medication.doctorId),
                 statusTone: _medicationBadgeTone(medication),
+                onTap: () => _openMedicationDetails(
+                  medication: medication,
+                  prescription: medication.prescriptionId == null
+                      ? null
+                      : prescriptionsById[medication.prescriptionId],
+                  latestIntake: latestIntakes[medication.id],
+                ),
                 onMarkCompleted: _isDoctor && medication.canMarkCompleted
                     ? () => _markMedicationCompleted(medication)
                     : null,
@@ -692,12 +892,12 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     );
   }
 
-  Widget _buildHistorySection() {
+  Widget _buildHistorySection({
+    required Map<int, Prescription> prescriptionsById,
+    required Map<int, List<Medication>> medicationsByPrescription,
+  }) {
     if (_isLoadingTreatments) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return const _LoadingList(itemCount: 3);
     }
 
     if (_treatmentsError != null) {
@@ -711,93 +911,108 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Ordonnances',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        _SubSectionHeader(
+          icon: Icons.receipt_long_outlined,
+          title: 'Ordonnances',
+          subtitle: 'Historique des prescriptions',
         ),
-        const SizedBox(height: AppSpacing.xs),
+        const SizedBox(height: AppSpacing.sm),
         if (_prescriptions.isEmpty)
-          const Text('Aucune ordonnance pour le moment.')
+          const _InlineEmptyMessage(
+            message: 'Aucune ordonnance disponible pour ce patient.',
+          )
         else
           ..._prescriptions.map((prescription) {
-            final doctorName = _doctorNameForId(prescription.doctorId);
-            return ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(
-                child: Icon(Icons.receipt_long_outlined),
+            final medications = medicationsByPrescription[prescription.id] ?? [];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: _PrescriptionHistoryCard(
+                prescription: prescription,
+                medicationsCount: medications.length,
+                doctorName:
+                    _doctorNameForId(prescription.doctorId) ??
+                    'Medecin #${prescription.doctorId}',
+                statusTone: _prescriptionBadgeTone(prescription),
+                formatDate: _formatDate,
+                onTap: () => _openPrescriptionDetails(prescription),
               ),
-              title: Text('Ordonnance #${prescription.id}'),
-              subtitle: Text(
-                'Date: ${_formatDate(prescription.prescriptionDate)}'
-                '${doctorName == null ? '' : '\nPrescripteur: $doctorName'}'
-                '${(prescription.notes ?? '').trim().isEmpty ? '' : '\n${prescription.notes!.trim()}'}',
-              ),
-              isThreeLine: true,
             );
           }),
-        const SizedBox(height: AppSpacing.md),
-        Text(
-          'Medicaments termines / annules',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        const SizedBox(height: AppSpacing.lg),
+        const Divider(height: 1),
+        const SizedBox(height: AppSpacing.lg),
+        _SubSectionHeader(
+          icon: Icons.history_toggle_off_outlined,
+          title: 'Medicaments termines et annules',
+          subtitle: 'Fin ou interruption des traitements',
         ),
-        const SizedBox(height: AppSpacing.xs),
+        const SizedBox(height: AppSpacing.sm),
         if (_archivedMedications.isEmpty)
-          const Text('Aucun medicament termine dans l historique.')
+          const _InlineEmptyMessage(
+            message: 'Aucun medicament termine ou annule dans l historique.',
+          )
         else
-          ..._archivedMedications.map(
-            (medication) => ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(child: Icon(Icons.history_outlined)),
-              title: Text('${medication.name} - ${medication.dosage}'),
-              subtitle: Text(
-                'Statut: ${medication.statusLabelFr}'
-                '\nDebut: ${_formatDate(medication.startDate)}'
-                '${medication.endDate == null ? '' : '  -  Fin: ${_formatDate(medication.endDate!)}'}',
+          ..._archivedMedications.map((medication) {
+            final prescription = medication.prescriptionId == null
+                ? null
+                : prescriptionsById[medication.prescriptionId];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: _ArchivedMedicationCard(
+                medication: medication,
+                prescriberName: _doctorNameForId(medication.doctorId),
+                formatDate: _formatDate,
+                onTap: () => _openMedicationDetails(
+                  medication: medication,
+                  prescription: prescription,
+                ),
               ),
-              isThreeLine: true,
-            ),
-          ),
-        const SizedBox(height: AppSpacing.md),
-        Text(
-          'Allergies',
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        if (_allergies.isEmpty)
-          const Text('Aucune allergie enregistree.')
-        else
-          ..._allergies.map((allergy) {
-            final doctorName = _doctorNameForId(allergy.doctorId);
-            final date = allergy.createdAt;
-            final reaction = (allergy.reaction ?? '').trim();
-            return ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(child: Icon(Icons.warning_outlined)),
-              title: Text('${allergy.allergen} - ${allergy.severityLabelFr}'),
-              subtitle: Text(
-                '${reaction.isEmpty ? 'Reaction non precisee' : reaction}'
-                '${date == null ? '' : '\nDate: ${_formatDate(date)}'}'
-                '${doctorName == null ? '' : '\nNotee par: $doctorName'}',
-              ),
-              isThreeLine: true,
             );
           }),
       ],
     );
   }
 
+  Widget _buildAllergiesSection() {
+    if (_isLoadingTreatments) {
+      return const _LoadingList(itemCount: 2);
+    }
+
+    if (_treatmentsError != null) {
+      return EmptyState(
+        icon: Icons.cloud_off_outlined,
+        title: 'Chargement impossible',
+        message: _treatmentsError!,
+      );
+    }
+
+    if (_allergies.isEmpty) {
+      return const EmptyState(
+        icon: Icons.shield_outlined,
+        title: 'Aucune allergie',
+        message: 'Aucune allergie enregistree pour ce patient.',
+      );
+    }
+
+    return Column(
+      children: _allergies
+          .map(
+            (allergy) => Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: _AllergyCard(
+                allergy: allergy,
+                doctorName: _doctorNameForId(allergy.doctorId),
+                formatDate: _formatDate,
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
   Widget _buildAppointmentsSection() {
     if (_isLoadingAppointments) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return const _LoadingList(itemCount: 2);
     }
 
     if (_appointmentsError != null) {
@@ -820,14 +1035,11 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
       children: _appointments
           .map(
             (item) => Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
               child: _AppointmentListTile(
                 item: item,
                 statusLabel: _appointmentStatusLabel(item.effectiveStatus),
-                statusColor: _appointmentStatusColor(
-                  item.effectiveStatus,
-                  context,
-                ),
+                statusColor: _appointmentStatusColor(item.effectiveStatus),
                 onEdit: () => _openEditAppointment(item),
                 onMarkCompleted: _isDoctor && item.canMarkCompleted
                     ? () => _markAppointmentCompleted(item)
@@ -840,12 +1052,9 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
     );
   }
 
-  Widget _buildIntakesSection() {
+  Widget _buildIntakesSection({required Map<int, Medication> medicationById}) {
     if (_isLoadingTreatments) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return const _LoadingList(itemCount: 2);
     }
 
     if (_treatmentsError != null) {
@@ -864,40 +1073,163 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
       );
     }
 
-    final medicationNameById = <int, String>{
-      for (final medication in [..._activeMedications, ..._archivedMedications])
-        medication.id: medication.name,
-    };
-
     return Column(
       children: _medicationIntakes.take(12).map((intake) {
         final medicationName =
-            medicationNameById[intake.medicationId] ??
+            medicationById[intake.medicationId]?.name ??
             'Medicament #${intake.medicationId}';
-        final comment = (intake.comment ?? '').trim();
-        final tone = intake.isTaken ? BadgeTone.success : BadgeTone.warning;
-        return ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const CircleAvatar(child: Icon(Icons.checklist_outlined)),
-          title: Text('$medicationName - ${intake.statusLabelFr}'),
-          subtitle: Text(
-            '${_formatDateTime(intake.takenAt)}${comment.isEmpty ? '' : '\n$comment'}',
+        return Padding(
+          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+          child: _IntakeCard(
+            medicationName: medicationName,
+            intake: intake,
+            formatDateTime: _formatDateTime,
           ),
-          isThreeLine: comment.isNotEmpty,
-          trailing: StatusBadge(label: intake.statusLabelFr, tone: tone),
         );
       }).toList(),
     );
   }
 }
 
-class _MedicationListTile extends StatelessWidget {
-  const _MedicationListTile({
+class _HeaderFactChip extends StatelessWidget {
+  const _HeaderFactChip({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: AppColors.textSecondary),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SubSectionHeader extends StatelessWidget {
+  const _SubSectionHeader({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: AppColors.primaryBlue.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: AppColors.primaryBlue, size: 20),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(subtitle, style: theme.textTheme.bodySmall),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InlineEmptyMessage extends StatelessWidget {
+  const _InlineEmptyMessage({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Text(message, style: Theme.of(context).textTheme.bodyMedium),
+    );
+  }
+}
+
+class _LoadingList extends StatelessWidget {
+  const _LoadingList({required this.itemCount});
+
+  final int itemCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: List.generate(itemCount, (index) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: index == itemCount - 1 ? 0 : AppSpacing.sm,
+          ),
+          child: Container(
+            height: 72,
+            decoration: BoxDecoration(
+              color: AppColors.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _MedicationOverviewCard extends StatelessWidget {
+  const _MedicationOverviewCard({
     required this.medication,
     required this.prescription,
     required this.latestIntake,
     required this.prescriberName,
     required this.statusTone,
+    required this.onTap,
     required this.onMarkCompleted,
     required this.onCancel,
     required this.onMarkTaken,
@@ -911,6 +1243,7 @@ class _MedicationListTile extends StatelessWidget {
   final MedicationIntake? latestIntake;
   final String? prescriberName;
   final BadgeTone statusTone;
+  final VoidCallback onTap;
   final VoidCallback? onMarkCompleted;
   final VoidCallback? onCancel;
   final VoidCallback? onMarkTaken;
@@ -920,126 +1253,473 @@ class _MedicationListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final details = <String>[];
-    details.add('Frequence: ${medication.frequency}');
-
-    final form = (medication.form ?? '').trim();
-    if (form.isNotEmpty) {
-      details.add('Forme: $form');
-    }
-
-    final quantity = (medication.quantity ?? '').trim();
-    if (quantity.isNotEmpty) {
-      details.add('Quantite: $quantity');
-    }
-
-    final period = (medication.period ?? '').trim();
-    if (period.isNotEmpty) {
-      details.add('Periode: $period');
-    }
-
-    details.add('Debut: ${formatDate(medication.startDate)}');
-    if (medication.endDate != null) {
-      details.add('Fin: ${formatDate(medication.endDate!)}');
-    }
-
-    final prescriptionDate = prescription?.prescriptionDate;
-    if (prescriptionDate != null) {
-      details.add('Date ordonnance: ${formatDate(prescriptionDate)}');
-    }
-
-    if ((prescriberName ?? '').trim().isNotEmpty) {
-      details.add('Prescripteur: ${prescriberName!.trim()}');
-    }
-
-    final instructions = (medication.instructions ?? '').trim();
-    if (instructions.isNotEmpty) {
-      details.add('Instructions: $instructions');
-    }
-
-    final intake = latestIntake;
-    if (intake != null) {
-      details.add(
-        'Derniere prise: ${intake.statusLabelFr} (${formatDateTime(intake.takenAt)})',
-      );
-      final intakeComment = (intake.comment ?? '').trim();
-      if (intakeComment.isNotEmpty) {
-        details.add('Commentaire prise: $intakeComment');
-      }
-    }
-
     final hasActions =
         onMarkCompleted != null ||
         onCancel != null ||
         onMarkTaken != null ||
         onMarkMissed != null;
+    final form = (medication.form ?? '').trim();
+    final quantity = (medication.quantity ?? '').trim();
+    final period = (medication.period ?? '').trim();
 
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: const CircleAvatar(child: Icon(Icons.medication_outlined)),
-      title: Row(
-        children: [
-          Expanded(child: Text('${medication.name} - ${medication.dosage}')),
-          StatusBadge(label: medication.statusLabelFr, tone: statusTone),
-        ],
-      ),
-      subtitle: Text(details.join('\n')),
-      isThreeLine: true,
-      trailing: hasActions
-          ? PopupMenuButton<_MedicationMenuAction>(
-              onSelected: (action) {
-                switch (action) {
-                  case _MedicationMenuAction.markCompleted:
-                    final callback = onMarkCompleted;
-                    if (callback != null) {
-                      callback();
-                    }
-                    return;
-                  case _MedicationMenuAction.cancel:
-                    final callback = onCancel;
-                    if (callback != null) {
-                      callback();
-                    }
-                    return;
-                  case _MedicationMenuAction.markTaken:
-                    final callback = onMarkTaken;
-                    if (callback != null) {
-                      callback();
-                    }
-                    return;
-                  case _MedicationMenuAction.markMissed:
-                    final callback = onMarkMissed;
-                    if (callback != null) {
-                      callback();
-                    }
-                    return;
-                }
-              },
-              itemBuilder: (context) => [
-                if (onMarkCompleted != null)
-                  const PopupMenuItem(
-                    value: _MedicationMenuAction.markCompleted,
-                    child: Text('Marquer termine'),
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          medication.name,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Dosage: ${medication.dosage}',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
                   ),
-                if (onCancel != null)
-                  const PopupMenuItem(
-                    value: _MedicationMenuAction.cancel,
-                    child: Text('Annuler traitement'),
+                  if (hasActions)
+                    PopupMenuButton<_MedicationMenuAction>(
+                      onSelected: (action) {
+                        switch (action) {
+                          case _MedicationMenuAction.markCompleted:
+                            onMarkCompleted?.call();
+                            return;
+                          case _MedicationMenuAction.cancel:
+                            onCancel?.call();
+                            return;
+                          case _MedicationMenuAction.markTaken:
+                            onMarkTaken?.call();
+                            return;
+                          case _MedicationMenuAction.markMissed:
+                            onMarkMissed?.call();
+                            return;
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        if (onMarkCompleted != null)
+                          const PopupMenuItem(
+                            value: _MedicationMenuAction.markCompleted,
+                            child: Text('Marquer termine'),
+                          ),
+                        if (onCancel != null)
+                          const PopupMenuItem(
+                            value: _MedicationMenuAction.cancel,
+                            child: Text('Annuler traitement'),
+                          ),
+                        if (onMarkTaken != null)
+                          const PopupMenuItem(
+                            value: _MedicationMenuAction.markTaken,
+                            child: Text('Indiquer pris'),
+                          ),
+                        if (onMarkMissed != null)
+                          const PopupMenuItem(
+                            value: _MedicationMenuAction.markMissed,
+                            child: Text('Indiquer manque'),
+                          ),
+                      ],
+                    ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.textSecondary,
                   ),
-                if (onMarkTaken != null)
-                  const PopupMenuItem(
-                    value: _MedicationMenuAction.markTaken,
-                    child: Text('Indiquer pris'),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  StatusBadge(label: medication.statusLabelFr, tone: statusTone),
+                  _InfoPill(
+                    icon: Icons.schedule_outlined,
+                    text: medication.frequency,
                   ),
-                if (onMarkMissed != null)
-                  const PopupMenuItem(
-                    value: _MedicationMenuAction.markMissed,
-                    child: Text('Indiquer manque'),
-                  ),
+                  if (form.isNotEmpty)
+                    _InfoPill(icon: Icons.category_outlined, text: form),
+                  if (quantity.isNotEmpty)
+                    _InfoPill(icon: Icons.format_list_numbered, text: quantity),
+                  if (period.isNotEmpty)
+                    _InfoPill(icon: Icons.date_range_outlined, text: period),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Debut: ${formatDate(medication.startDate)}'
+                '${medication.endDate == null ? '' : '  -  Fin: ${formatDate(medication.endDate!)}'}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              if ((prescriberName ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'Prescripteur: ${prescriberName!.trim()}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ],
-            )
-          : null,
+              if (prescription != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'Ordonnance #${prescription!.id} - ${formatDate(prescription!.prescriptionDate)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+              if (latestIntake != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'Derniere prise: ${latestIntake!.statusLabelFr} (${formatDateTime(latestIntake!.takenAt)})',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: latestIntake!.isTaken
+                        ? AppColors.statusGreen
+                        : AppColors.statusOrange,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
+  }
+}
+
+class _PrescriptionHistoryCard extends StatelessWidget {
+  const _PrescriptionHistoryCard({
+    required this.prescription,
+    required this.medicationsCount,
+    required this.doctorName,
+    required this.statusTone,
+    required this.formatDate,
+    required this.onTap,
+  });
+
+  final Prescription prescription;
+  final int medicationsCount;
+  final String doctorName;
+  final BadgeTone statusTone;
+  final String Function(DateTime date) formatDate;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final notes = (prescription.notes ?? '').trim();
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Ordonnance #${prescription.id}',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  StatusBadge(
+                    label: prescription.statusLabelFr,
+                    tone: statusTone,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  const Icon(
+                    Icons.open_in_new_rounded,
+                    size: 18,
+                    color: AppColors.textSecondary,
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  _InfoPill(
+                    icon: Icons.event_outlined,
+                    text: formatDate(prescription.prescriptionDate),
+                  ),
+                  _InfoPill(icon: Icons.person_outline, text: doctorName),
+                  _InfoPill(
+                    icon: Icons.medication_outlined,
+                    text: '$medicationsCount medicament(s)',
+                  ),
+                ],
+              ),
+              if (notes.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  notes,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ArchivedMedicationCard extends StatelessWidget {
+  const _ArchivedMedicationCard({
+    required this.medication,
+    required this.prescriberName,
+    required this.formatDate,
+    required this.onTap,
+  });
+
+  final Medication medication;
+  final String? prescriberName;
+  final String Function(DateTime date) formatDate;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isCancelled = medication.isCancelled;
+    final statusColor = isCancelled ? AppColors.statusOrange : AppColors.statusGreen;
+    final statusIcon = isCancelled
+        ? Icons.block_rounded
+        : Icons.check_circle_outline_rounded;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          medication.name,
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Dosage: ${medication.dosage}',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.sm,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: statusColor.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(statusIcon, size: 14, color: statusColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          medication.statusLabelFr,
+                          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            color: statusColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Frequence: ${medication.frequency}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Debut: ${formatDate(medication.startDate)}'
+                '${medication.endDate == null ? '' : '  -  Fin: ${formatDate(medication.endDate!)}'}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              if ((prescriberName ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'Prescripteur: ${prescriberName!.trim()}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AllergyCard extends StatelessWidget {
+  const _AllergyCard({
+    required this.allergy,
+    required this.doctorName,
+    required this.formatDate,
+  });
+
+  final PatientAllergy allergy;
+  final String? doctorName;
+  final String Function(DateTime date) formatDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final reaction = (allergy.reaction ?? '').trim();
+    final notes = (allergy.notes ?? '').trim();
+    final (severityBg, severityFg, severityIcon) = _severityStyle(
+      allergy.normalizedSeverity,
+    );
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    allergy.allergen,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: severityBg,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(severityIcon, size: 14, color: severityFg),
+                      const SizedBox(width: 4),
+                      Text(
+                        allergy.severityLabelFr,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: severityFg,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              reaction.isEmpty ? 'Reaction non precisee' : reaction,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            if (notes.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Notes: $notes',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (allergy.createdAt != null || (doctorName ?? '').trim().isNotEmpty)
+              ...[
+                const SizedBox(height: AppSpacing.xs),
+                Wrap(
+                  spacing: AppSpacing.xs,
+                  runSpacing: AppSpacing.xs,
+                  children: [
+                    if (allergy.createdAt != null)
+                      _InfoPill(
+                        icon: Icons.event_outlined,
+                        text: formatDate(allergy.createdAt!),
+                      ),
+                    if ((doctorName ?? '').trim().isNotEmpty)
+                      _InfoPill(
+                        icon: Icons.person_outline,
+                        text: doctorName!.trim(),
+                      ),
+                  ],
+                ),
+              ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  (Color, Color, IconData) _severityStyle(String severity) {
+    switch (severity) {
+      case PatientAllergy.severityLow:
+        return (
+          AppColors.statusGreen.withOpacity(0.12),
+          AppColors.statusGreen,
+          Icons.shield_outlined,
+        );
+      case PatientAllergy.severityHigh:
+        return (
+          AppColors.statusOrange.withOpacity(0.15),
+          AppColors.statusOrange,
+          Icons.priority_high_rounded,
+        );
+      case PatientAllergy.severityCritical:
+        return (
+          AppColors.statusRed.withOpacity(0.12),
+          AppColors.statusRed,
+          Icons.warning_amber_rounded,
+        );
+      case PatientAllergy.severityModerate:
+      default:
+        return (
+          AppColors.primaryBlue.withOpacity(0.1),
+          AppColors.primaryBlue,
+          Icons.report_problem_outlined,
+        );
+    }
   }
 }
 
@@ -1063,49 +1743,635 @@ class _AppointmentListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final notes = (item.notes ?? '').trim();
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: const CircleAvatar(child: Icon(Icons.event_note_outlined)),
-      title: Text('${item.dateLabel} - ${item.timeLabel}'),
-      subtitle: notes.isEmpty
-          ? Text(
-              'Statut: $statusLabel',
-              style: TextStyle(color: statusColor, fontWeight: FontWeight.w700),
-            )
-          : Text('Statut: $statusLabel\n$notes'),
-      isThreeLine: notes.isNotEmpty,
-      trailing: PopupMenuButton<_AppointmentMenuAction>(
-        onSelected: (action) {
-          switch (action) {
-            case _AppointmentMenuAction.edit:
-              onEdit();
-              return;
-            case _AppointmentMenuAction.markCompleted:
-              final callback = onMarkCompleted;
-              if (callback != null) {
-                callback();
-              }
-              return;
-            case _AppointmentMenuAction.delete:
-              onDelete();
-              return;
-          }
-        },
-        itemBuilder: (context) => [
-          const PopupMenuItem(
-            value: _AppointmentMenuAction.edit,
-            child: Text('Modifier'),
-          ),
-          if (onMarkCompleted != null)
-            const PopupMenuItem(
-              value: _AppointmentMenuAction.markCompleted,
-              child: Text('Marquer termine'),
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: AppSpacing.xs,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 4),
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppColors.primaryBlue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(
+                Icons.event_note_outlined,
+                size: 18,
+                color: AppColors.primaryBlue,
+              ),
             ),
-          const PopupMenuItem(
-            value: _AppointmentMenuAction.delete,
-            child: Text('Supprimer'),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${item.dateLabel} - ${item.timeLabel}',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.circle, size: 8, color: statusColor),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          statusLabel,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: statusColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (notes.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      notes,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            PopupMenuButton<_AppointmentMenuAction>(
+              onSelected: (action) {
+                switch (action) {
+                  case _AppointmentMenuAction.edit:
+                    onEdit();
+                    return;
+                  case _AppointmentMenuAction.markCompleted:
+                    onMarkCompleted?.call();
+                    return;
+                  case _AppointmentMenuAction.delete:
+                    onDelete();
+                    return;
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: _AppointmentMenuAction.edit,
+                  child: Text('Modifier'),
+                ),
+                if (onMarkCompleted != null)
+                  const PopupMenuItem(
+                    value: _AppointmentMenuAction.markCompleted,
+                    child: Text('Marquer termine'),
+                  ),
+                const PopupMenuItem(
+                  value: _AppointmentMenuAction.delete,
+                  child: Text('Supprimer'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IntakeCard extends StatelessWidget {
+  const _IntakeCard({
+    required this.medicationName,
+    required this.intake,
+    required this.formatDateTime,
+  });
+
+  final String medicationName;
+  final MedicationIntake intake;
+  final String Function(DateTime date) formatDateTime;
+
+  @override
+  Widget build(BuildContext context) {
+    final comment = (intake.comment ?? '').trim();
+    final isTaken = intake.isTaken;
+    final tone = isTaken ? BadgeTone.success : BadgeTone.warning;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    medicationName,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                StatusBadge(label: intake.statusLabelFr, tone: tone),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              formatDateTime(intake.takenAt),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            if (comment.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                comment,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoPill extends StatelessWidget {
+  const _InfoPill({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: 6,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppColors.textSecondary),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MedicationDetailsDialog extends StatelessWidget {
+  const _MedicationDetailsDialog({
+    required this.medication,
+    required this.prescription,
+    required this.latestIntake,
+    required this.prescriberName,
+    required this.formatDate,
+    required this.formatDateTime,
+  });
+
+  final Medication medication;
+  final Prescription? prescription;
+  final MedicationIntake? latestIntake;
+  final String? prescriberName;
+  final String Function(DateTime date) formatDate;
+  final String Function(DateTime date) formatDateTime;
+
+  @override
+  Widget build(BuildContext context) {
+    final fields = <_DialogFieldData>[
+      _DialogFieldData(label: 'Nom', value: medication.name),
+      _DialogFieldData(label: 'Dosage', value: medication.dosage),
+      _DialogFieldData(label: 'Frequence', value: medication.frequency),
+      if ((medication.quantity ?? '').trim().isNotEmpty)
+        _DialogFieldData(label: 'Quantite', value: medication.quantity!.trim()),
+      if ((medication.period ?? '').trim().isNotEmpty)
+        _DialogFieldData(label: 'Periode', value: medication.period!.trim()),
+      if ((medication.form ?? '').trim().isNotEmpty)
+        _DialogFieldData(label: 'Forme', value: medication.form!.trim()),
+      _DialogFieldData(label: 'Date debut', value: formatDate(medication.startDate)),
+      if (medication.endDate != null)
+        _DialogFieldData(
+          label: 'Date fin',
+          value: formatDate(medication.endDate!),
+        ),
+      _DialogFieldData(label: 'Statut', value: medication.statusLabelFr),
+      if ((prescriberName ?? '').trim().isNotEmpty)
+        _DialogFieldData(label: 'Prescripteur', value: prescriberName!.trim()),
+      if (prescription != null)
+        _DialogFieldData(
+          label: 'Ordonnance',
+          value:
+              '#${prescription!.id} (${formatDate(prescription!.prescriptionDate)})',
+        ),
+    ];
+
+    final instructions = (medication.instructions ?? '').trim();
+    final intake = latestIntake;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(AppSpacing.md),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 700, maxHeight: 760),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.sm,
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Detail du traitement',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          medication.name,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                  StatusBadge(
+                    label: medication.statusLabelFr,
+                    tone: medication.isCompleted
+                        ? BadgeTone.success
+                        : medication.isCancelled
+                        ? BadgeTone.warning
+                        : BadgeTone.primary,
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _DialogSection(
+                      title: 'Informations',
+                      fields: fields,
+                    ),
+                    if (intake != null) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      _DialogSection(
+                        title: 'Derniere prise',
+                        fields: [
+                          _DialogFieldData(
+                            label: 'Statut',
+                            value: intake.statusLabelFr,
+                          ),
+                          _DialogFieldData(
+                            label: 'Date',
+                            value: formatDateTime(intake.takenAt),
+                          ),
+                          if ((intake.comment ?? '').trim().isNotEmpty)
+                            _DialogFieldData(
+                              label: 'Commentaire',
+                              value: intake.comment!.trim(),
+                            ),
+                        ],
+                      ),
+                    ],
+                    if (instructions.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      _DialogSection(
+                        title: 'Instructions',
+                        fields: [
+                          _DialogFieldData(
+                            label: 'Details',
+                            value: instructions,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Fermer'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PrescriptionDetailsDialog extends StatelessWidget {
+  const _PrescriptionDetailsDialog({
+    required this.prescription,
+    required this.medications,
+    required this.patient,
+    required this.doctorName,
+    required this.canPrint,
+    required this.onPrint,
+    required this.formatDate,
+  });
+
+  final Prescription prescription;
+  final List<Medication> medications;
+  final PatientSummary patient;
+  final String doctorName;
+  final bool canPrint;
+  final Future<void> Function() onPrint;
+  final String Function(DateTime date) formatDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final notes = (prescription.notes ?? '').trim();
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(AppSpacing.md),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860, maxHeight: 780),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.sm,
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Ordonnance #${prescription.id}',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Date: ${formatDate(prescription.prescriptionDate)}',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                  StatusBadge(
+                    label: prescription.statusLabelFr,
+                    tone: prescription.normalizedStatus == Prescription.statusCompleted
+                        ? BadgeTone.success
+                        : prescription.normalizedStatus ==
+                              Prescription.statusCancelled
+                        ? BadgeTone.warning
+                        : BadgeTone.primary,
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _DialogSection(
+                      title: 'Informations patient',
+                      fields: [
+                        _DialogFieldData(label: 'Nom', value: patient.fullName),
+                        _DialogFieldData(label: 'Code', value: patient.code),
+                        _DialogFieldData(label: 'CIN', value: patient.cin),
+                        _DialogFieldData(
+                          label: 'Age',
+                          value: '${patient.age} ans',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    _DialogSection(
+                      title: 'Informations ordonnance',
+                      fields: [
+                        _DialogFieldData(
+                          label: 'Numero',
+                          value: '#${prescription.id}',
+                        ),
+                        _DialogFieldData(
+                          label: 'Date ordonnance',
+                          value: formatDate(prescription.prescriptionDate),
+                        ),
+                        _DialogFieldData(label: 'Prescripteur', value: doctorName),
+                        _DialogFieldData(
+                          label: 'Statut',
+                          value: prescription.statusLabelFr,
+                        ),
+                        if (notes.isNotEmpty)
+                          _DialogFieldData(label: 'Notes', value: notes),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      'Medicaments',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    if (medications.isEmpty)
+                      const _InlineEmptyMessage(
+                        message: 'Aucun medicament lie a cette ordonnance.',
+                      )
+                    else
+                      ...medications.map(
+                        (item) => Padding(
+                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                          child: _PrescriptionMedicationCard(
+                            medication: item,
+                            formatDate: formatDate,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Fermer'),
+                  ),
+                  if (canPrint)
+                    OutlinedButton.icon(
+                      onPressed: () => onPrint(),
+                      icon: const Icon(Icons.print_outlined),
+                      label: const Text('Imprimer'),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PrescriptionMedicationCard extends StatelessWidget {
+  const _PrescriptionMedicationCard({
+    required this.medication,
+    required this.formatDate,
+  });
+
+  final Medication medication;
+  final String Function(DateTime date) formatDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final form = (medication.form ?? '').trim();
+    final quantity = (medication.quantity ?? '').trim();
+    final period = (medication.period ?? '').trim();
+    final instructions = (medication.instructions ?? '').trim();
+
+    final fields = <_DialogFieldData>[
+      _DialogFieldData(label: 'Dosage', value: medication.dosage),
+      _DialogFieldData(label: 'Frequence', value: medication.frequency),
+      if (quantity.isNotEmpty) _DialogFieldData(label: 'Quantite', value: quantity),
+      if (period.isNotEmpty) _DialogFieldData(label: 'Periode', value: period),
+      if (form.isNotEmpty) _DialogFieldData(label: 'Forme', value: form),
+      _DialogFieldData(label: 'Date debut', value: formatDate(medication.startDate)),
+      if (medication.endDate != null)
+        _DialogFieldData(label: 'Date fin', value: formatDate(medication.endDate!)),
+      _DialogFieldData(label: 'Statut', value: medication.statusLabelFr),
+      if (instructions.isNotEmpty)
+        _DialogFieldData(label: 'Instructions', value: instructions),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+        color: AppColors.surfaceAlt,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            medication.name,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          ...fields.map((field) => _DialogField(data: field)),
+        ],
+      ),
+    );
+  }
+}
+
+class _DialogSection extends StatelessWidget {
+  const _DialogSection({required this.title, required this.fields});
+
+  final String title;
+  final List<_DialogFieldData> fields;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          ...fields.map((field) => _DialogField(data: field)),
+        ],
+      ),
+    );
+  }
+}
+
+class _DialogFieldData {
+  const _DialogFieldData({required this.label, required this.value});
+
+  final String label;
+  final String value;
+}
+
+class _DialogField extends StatelessWidget {
+  const _DialogField({required this.data});
+
+  final _DialogFieldData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: RichText(
+        text: TextSpan(
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: AppColors.textPrimary,
+          ),
+          children: [
+            TextSpan(
+              text: '${data.label}: ',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            TextSpan(text: data.value),
+          ],
+        ),
       ),
     );
   }

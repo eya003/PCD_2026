@@ -223,6 +223,31 @@ def get_patients(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.Patient).offset(skip).limit(limit).all()
 
 
+def search_patients_autocomplete(
+    db: Session,
+    query: str,
+    doctor_id: int,
+    limit: int = 10,
+):
+    """Recherche partielle (ilike) sur CIN, prénom, nom pour les patients liés au médecin."""
+    q = query.strip()
+    if not q:
+        return []
+    pattern = f"%{q}%"
+    return (
+        db.query(models.Patient)
+        .join(models.DoctorPatient, models.DoctorPatient.patient_id == models.Patient.id)
+        .filter(models.DoctorPatient.doctor_id == doctor_id)
+        .filter(
+            models.Patient.cin.ilike(pattern)
+            | models.Patient.first_name.ilike(pattern)
+            | models.Patient.last_name.ilike(pattern)
+        )
+        .limit(limit)
+        .all()
+    )
+
+
 def create_patient(
     db: Session,
     patient: schemas.PatientCreate,

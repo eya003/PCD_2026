@@ -41,7 +41,10 @@ class StatusBadge extends StatelessWidget {
       case BadgeTone.success:
         return (AppColors.statusGreen.withOpacity(0.15), AppColors.statusGreen);
       case BadgeTone.warning:
-        return (AppColors.statusTeal.withOpacity(0.16), AppColors.statusTeal);
+        return (
+          AppColors.statusOrange.withOpacity(0.15),
+          AppColors.statusOrange,
+        );
       case BadgeTone.neutral:
         return (AppColors.surfaceAlt, AppColors.textSecondary);
     }

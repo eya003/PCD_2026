@@ -10,6 +10,7 @@ import '../models/medication_intake.dart';
 import '../models/patient_allergy.dart';
 import '../models/prescription.dart';
 import '../models/user_role.dart';
+import 'api_base_url.dart';
 
 class TreatmentsException implements Exception {
   const TreatmentsException(this.message, {this.statusCode});
@@ -46,7 +47,10 @@ class PatientTreatmentData {
 class TreatmentsService {
   TreatmentsService({http.Client? httpClient, String? baseUrl})
     : _httpClient = httpClient ?? http.Client(),
-      _baseUrl = (baseUrl ?? _defaultBaseUrl()).replaceAll(RegExp(r'/$'), '');
+      _baseUrl = resolveApiBaseUrl(overrideBaseUrl: baseUrl).replaceAll(
+        RegExp(r'/$'),
+        '',
+      );
 
   final http.Client _httpClient;
   final String _baseUrl;
@@ -56,59 +60,82 @@ class TreatmentsService {
   static const _userIdKey = 'auth_user_id';
   static const _roleKey = 'auth_role';
 
-  static String _defaultBaseUrl() {
-    const envUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
-    if (envUrl.isNotEmpty) {
-      return envUrl;
-    }
-    if (kIsWeb) {
-      final host = Uri.base.host.trim();
-      final scheme = Uri.base.scheme == 'https' ? 'https' : 'http';
-      if (host.isNotEmpty && host != 'localhost' && host != '127.0.0.1') {
-        return '$scheme://$host:8000';
-      }
-    }
-    return 'http://127.0.0.1:8000';
-  }
-
   Future<UserRole> getCurrentRole() async {
     final session = await _getSessionContext();
     return session.role;
   }
+
+  // Retourne true si l'erreur N'EST PAS une erreur d'authentification (401).
+  // Utilisé comme test dans catchError pour laisser passer les 401.
+  static bool _isNonAuthError(Object e) =>
+      !(e is TreatmentsException && e.statusCode == 401);
 
   Future<PatientTreatmentData> fetchPatientTreatmentData({
     required int patientId,
   }) async {
     final session = await _getSessionContext();
     final headers = {'Authorization': 'Bearer ${session.token}'};
-    final activeApi = await _withRequestContext(
-      'GET /patients/$patientId/active-medications',
-      () => _fetchActiveMedications(patientId: patientId, headers: headers),
+
+    // Tous les appels sont lancés en parallèle.
+    // Chaque appel est isolé : une erreur non-401 retourne une liste vide
+    // plutôt que de faire échouer toute la fonction.
+    final activeFuture = _fetchActiveMedications(
+      patientId: patientId,
+      headers: headers,
+    ).catchError(
+      (Object _) => <Medication>[],
+      test: _isNonAuthError,
     );
-    final completedApi = await _withRequestContext(
-      'GET /patients/$patientId/completed-medications',
-      () => _fetchCompletedMedications(patientId: patientId, headers: headers),
+    final completedFuture = _fetchCompletedMedications(
+      patientId: patientId,
+      headers: headers,
+    ).catchError(
+      (Object _) => <Medication>[],
+      test: _isNonAuthError,
     );
-    final allApi = await _withRequestContext(
-      'GET /patients/$patientId/medications',
-      () => _fetchAllMedications(patientId: patientId, headers: headers),
+    final allFuture = _fetchAllMedications(
+      patientId: patientId,
+      headers: headers,
+    ).catchError(
+      (Object _) => <Medication>[],
+      test: _isNonAuthError,
     );
-    final intakes = await _withRequestContext(
-      'GET /patients/$patientId/medication-intakes',
-      () => _fetchMedicationIntakes(patientId: patientId, headers: headers),
+    final intakesFuture = _fetchMedicationIntakes(
+      patientId: patientId,
+      headers: headers,
+    ).catchError(
+      (Object _) => <MedicationIntake>[],
+      test: _isNonAuthError,
     );
-    final prescriptions = await _withRequestContext(
-      'GET /patients/$patientId/prescriptions',
-      () => _fetchPrescriptions(patientId: patientId, headers: headers),
+    final prescriptionsFuture = _fetchPrescriptions(
+      patientId: patientId,
+      headers: headers,
+    ).catchError(
+      (Object _) => <Prescription>[],
+      test: _isNonAuthError,
     );
-    final allergies = await _withRequestContext(
-      'GET /patients/$patientId/allergies',
-      () => _fetchAllergies(patientId: patientId, headers: headers),
+    final allergiesFuture = _fetchAllergies(
+      patientId: patientId,
+      headers: headers,
+    ).catchError(
+      (Object _) => <PatientAllergy>[],
+      test: _isNonAuthError,
     );
-    final doctorsById = await _withRequestContext(
-      'GET /patients/$patientId/doctors',
-      () => _fetchPatientDoctors(patientId: patientId, headers: headers),
+    final doctorsFuture = _fetchPatientDoctors(
+      patientId: patientId,
+      headers: headers,
+    ).catchError(
+      (Object _) => <int, String>{},
+      test: _isNonAuthError,
     );
+
+    final activeApi = await activeFuture;
+    final completedApi = await completedFuture;
+    final allApi = await allFuture;
+    final intakes = await intakesFuture;
+    final prescriptions = await prescriptionsFuture;
+    final allergies = await allergiesFuture;
+    final doctorsById = await doctorsFuture;
 
     final byId = <int, Medication>{};
     for (final item in allApi) {
@@ -576,10 +603,15 @@ class TreatmentsService {
         'Format de reponse ordonnances invalide.',
       );
     }
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(Prescription.fromJson)
-        .toList();
+    final result = <Prescription>[];
+    for (final item in data.whereType<Map<String, dynamic>>()) {
+      try {
+        result.add(Prescription.fromJson(item));
+      } catch (_) {
+        // Item malformé ignoré.
+      }
+    }
+    return result;
   }
 
   Future<List<PatientAllergy>> _fetchAllergies({
@@ -601,10 +633,15 @@ class TreatmentsService {
     if (data is! List) {
       throw const TreatmentsException('Format de reponse allergies invalide.');
     }
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(PatientAllergy.fromJson)
-        .toList();
+    final result = <PatientAllergy>[];
+    for (final item in data.whereType<Map<String, dynamic>>()) {
+      try {
+        result.add(PatientAllergy.fromJson(item));
+      } catch (_) {
+        // Item malformé ignoré.
+      }
+    }
+    return result;
   }
 
   Future<Map<int, String>> _fetchPatientDoctors({
@@ -653,10 +690,15 @@ class TreatmentsService {
         'Format de reponse medicaments invalide.',
       );
     }
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(Medication.fromJson)
-        .toList();
+    final result = <Medication>[];
+    for (final item in data.whereType<Map<String, dynamic>>()) {
+      try {
+        result.add(Medication.fromJson(item));
+      } catch (_) {
+        // Item malformé ignoré — les autres restent visibles.
+      }
+    }
+    return result;
   }
 
   List<MedicationIntake> _parseMedicationIntakeList(dynamic data) {
@@ -665,10 +707,15 @@ class TreatmentsService {
         'Format de reponse prises medicaments invalide.',
       );
     }
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(MedicationIntake.fromJson)
-        .toList();
+    final result = <MedicationIntake>[];
+    for (final item in data.whereType<Map<String, dynamic>>()) {
+      try {
+        result.add(MedicationIntake.fromJson(item));
+      } catch (_) {
+        // Item malformé ignoré — les autres restent visibles.
+      }
+    }
+    return result;
   }
 
   Future<_SessionContext> _getSessionContext() async {

@@ -13,6 +13,7 @@ class CreateAppointmentScreen extends StatefulWidget {
     this.selectablePatients = const [],
     this.lockPatient = false,
     this.initialAppointment,
+    this.initialDate,
   });
 
   // Compatibility with legacy usages that only provided a name.
@@ -21,6 +22,7 @@ class CreateAppointmentScreen extends StatefulWidget {
   final List<PatientSummary> selectablePatients;
   final bool lockPatient;
   final AppointmentItem? initialAppointment;
+  final DateTime? initialDate;
 
   @override
   State<CreateAppointmentScreen> createState() =>
@@ -62,6 +64,10 @@ class _CreateAppointmentScreenState extends State<CreateAppointmentScreen> {
       _timeController.text = _formatTime(_selectedTime!);
       _notesController.text = existingAppointment.notes ?? '';
       _status = _normalizeStatus(existingAppointment.status);
+    } else if (widget.initialDate != null) {
+      final d = widget.initialDate!;
+      _selectedDate = DateTime(d.year, d.month, d.day);
+      _dateController.text = _formatDate(_selectedDate!);
     }
   }
 

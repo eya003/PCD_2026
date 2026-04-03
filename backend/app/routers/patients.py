@@ -85,6 +85,24 @@ def search_patient(
     return db_patient
 
 
+@router.get("/autocomplete", response_model=list[schemas.Patient])
+def autocomplete_patients(
+    q: str = "",
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Recherche patients du médecin par CIN ou nom (correspondance partielle)."""
+    if current_user.role != "doctor":
+        raise HTTPException(status_code=403, detail="Only doctors can search patients")
+    return cruds.search_patients_autocomplete(
+        db=db,
+        query=q,
+        doctor_id=current_user.id,
+        limit=min(limit, 20),
+    )
+
+
 @router.get("/{patient_id}/doctors", response_model=list[schemas.User])
 def read_patient_doctors(
     patient_id: int,

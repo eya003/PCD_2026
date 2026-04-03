@@ -16,12 +16,16 @@ class MainShell extends StatefulWidget {
     required this.email,
     required this.userId,
     required this.role,
+    required this.firstName,
+    required this.lastName,
     required this.onLogout,
   });
 
   final String email;
   final int userId;
   final UserRole role;
+  final String firstName;
+  final String lastName;
   final Future<void> Function() onLogout;
 
   @override
@@ -40,16 +44,21 @@ class _MainShellState extends State<MainShell> {
       onAddPatient: _openCreatePatientScreen,
       patientsRevision: _patientsRevision,
       appointmentsRevision: _appointmentsRevision,
+      firstName: widget.firstName,
+      lastName: widget.lastName,
     ),
     PatientsScreen(
       patientsRevision: _patientsRevision,
       appointmentsRevision: _appointmentsRevision,
+      onAddPatient: _openCreatePatientScreen,
     ),
     const AiModuleScreen(),
     ProfileScreen(
       email: widget.email,
       userId: widget.userId,
       role: widget.role,
+      firstName: widget.firstName,
+      lastName: widget.lastName,
       onLogout: widget.onLogout,
     ),
   ];
@@ -117,12 +126,17 @@ class _MainShellState extends State<MainShell> {
           ),
           Padding(
             padding: const EdgeInsets.only(right: AppSpacing.md),
-            child: CircleAvatar(
-              radius: 16,
-              child: Text(
-                widget.email.trim().isEmpty
-                    ? 'D'
-                    : widget.email.trim().substring(0, 1).toUpperCase(),
+            child: GestureDetector(
+              onTap: () => _setTab(3),
+              child: CircleAvatar(
+                radius: 16,
+                child: Text(
+                  widget.firstName.trim().isNotEmpty
+                      ? widget.firstName.trim().substring(0, 1).toUpperCase()
+                      : widget.email.trim().isEmpty
+                          ? 'D'
+                          : widget.email.trim().substring(0, 1).toUpperCase(),
+                ),
               ),
             ),
           ),

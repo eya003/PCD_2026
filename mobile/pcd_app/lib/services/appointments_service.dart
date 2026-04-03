@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/appointment_item.dart';
 import '../models/patient_summary.dart';
+import 'api_base_url.dart';
 
 class AppointmentsException implements Exception {
   const AppointmentsException(this.message, {this.statusCode});
@@ -21,7 +22,10 @@ class AppointmentsException implements Exception {
 class AppointmentsService {
   AppointmentsService({http.Client? httpClient, String? baseUrl})
     : _httpClient = httpClient ?? http.Client(),
-      _baseUrl = (baseUrl ?? _defaultBaseUrl()).replaceAll(RegExp(r'/$'), '');
+      _baseUrl = resolveApiBaseUrl(overrideBaseUrl: baseUrl).replaceAll(
+        RegExp(r'/$'),
+        '',
+      );
 
   final http.Client _httpClient;
   final String _baseUrl;
@@ -29,14 +33,6 @@ class AppointmentsService {
 
   static const _tokenKey = 'auth_token';
   static const _userIdKey = 'auth_user_id';
-
-  static String _defaultBaseUrl() {
-    const envUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
-    if (envUrl.isNotEmpty) {
-      return envUrl;
-    }
-    return kIsWeb ? 'http://localhost:8000' : 'http://127.0.0.1:8000';
-  }
 
   Future<List<AppointmentItem>> fetchDoctorAppointments({
     Map<int, PatientSummary>? patientsById,

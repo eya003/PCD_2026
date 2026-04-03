@@ -315,6 +315,7 @@ class MedicationSummary(BaseModel):
     period: str | None = None
     start_date: date
     end_date: date | None = None
+    instructions: str | None = None
     status: MedicationStatus
     model_config = ConfigDict(from_attributes=True)
 

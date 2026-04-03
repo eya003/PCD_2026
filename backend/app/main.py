@@ -30,30 +30,44 @@ def _build_cors_origins() -> list[str]:
     configured = os.getenv("CORS_ORIGINS", "").strip()
     if configured:
         return [origin.strip() for origin in configured.split(",") if origin.strip()]
-    return [
+    defaults = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5000",
+        "http://127.0.0.1:5000",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
     ]
+    return sorted(set(defaults))
+
+
+def _build_cors_origin_regex() -> str:
+    configured = os.getenv("CORS_ORIGIN_REGEX", "").strip()
+    if configured:
+        return configured
+    return (
+        r"https?://("
+        r"localhost|127\.0\.0\.1|0\.0\.0\.0|"
+        r"[a-zA-Z0-9\-]+|"
+        r"192\.168\.\d{1,3}\.\d{1,3}|"
+        r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+        r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
+        r")(:\d+)?$"
+    )
+
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_build_cors_origins(),
-    allow_origin_regex=(
-        r"https?://("
-        r"localhost|127\.0\.0\.1|0\.0\.0\.0|"
-        r"192\.168\.\d{1,3}\.\d{1,3}|"
-        r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
-        r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
-        r")(:\d+)?"
-    ),
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "Origin"],
+    allow_origin_regex=_build_cors_origin_regex(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
+
 
 @app.get("/")
 def root():

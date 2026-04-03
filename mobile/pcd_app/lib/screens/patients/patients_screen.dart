@@ -17,10 +17,12 @@ class PatientsScreen extends StatefulWidget {
     super.key,
     required this.patientsRevision,
     required this.appointmentsRevision,
+    this.onAddPatient,
   });
 
   final ValueListenable<int> patientsRevision;
   final ValueNotifier<int> appointmentsRevision;
+  final VoidCallback? onAddPatient;
 
   @override
   State<PatientsScreen> createState() => _PatientsScreenState();
@@ -95,10 +97,19 @@ class _PatientsScreenState extends State<PatientsScreen> {
       child: ListView(
         padding: const EdgeInsets.all(AppSpacing.md),
         children: [
-          const AppHeader(
+          AppHeader(
             title: 'Patients',
             subtitle:
                 'Recherche rapide, filtres et ouverture de fiche en 1 clic.',
+            actions: widget.onAddPatient != null
+                ? [
+                    FilledButton.icon(
+                      onPressed: widget.onAddPatient,
+                      icon: const Icon(Icons.person_add_alt_1_outlined),
+                      label: const Text('Ajouter'),
+                    ),
+                  ]
+                : const [],
           ),
           const SizedBox(height: AppSpacing.md),
           AppSearchField(

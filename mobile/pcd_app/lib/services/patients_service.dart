@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/patient_summary.dart';
 import '../models/status_type.dart';
+import 'api_base_url.dart';
 
 class PatientsException implements Exception {
   const PatientsException(this.message, {this.statusCode});
@@ -21,7 +22,10 @@ class PatientsException implements Exception {
 class PatientsService {
   PatientsService({http.Client? httpClient, String? baseUrl})
     : _httpClient = httpClient ?? http.Client(),
-      _baseUrl = (baseUrl ?? _defaultBaseUrl()).replaceAll(RegExp(r'/$'), '');
+      _baseUrl = resolveApiBaseUrl(overrideBaseUrl: baseUrl).replaceAll(
+        RegExp(r'/$'),
+        '',
+      );
 
   final http.Client _httpClient;
   final String _baseUrl;
@@ -29,14 +33,6 @@ class PatientsService {
 
   static const _tokenKey = 'auth_token';
   static const _userIdKey = 'auth_user_id';
-
-  static String _defaultBaseUrl() {
-    const envUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
-    if (envUrl.isNotEmpty) {
-      return envUrl;
-    }
-    return kIsWeb ? 'http://localhost:8000' : 'http://127.0.0.1:8000';
-  }
 
   Future<List<PatientSummary>> fetchPatients({
     String query = '',
@@ -62,14 +58,46 @@ class PatientsService {
     }).toList();
   }
 
+  Future<Map<int, int>> _fetchAppointmentCountMap(
+    _SessionContext session,
+  ) async {
+    try {
+      final endpoint = '/doctors/${session.userId}/appointments';
+      final response = await _safeGet(
+        endpoint,
+        headers: {'Authorization': 'Bearer ${session.token}'},
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return {};
+      }
+      final data = _decodeJson(response);
+      if (data is! List) return {};
+      final countMap = <int, int>{};
+      for (final item in data) {
+        if (item is Map<String, dynamic>) {
+          final pid = item['patient_id'];
+          if (pid is int) {
+            countMap[pid] = (countMap[pid] ?? 0) + 1;
+          }
+        }
+      }
+      return countMap;
+    } catch (_) {
+      return {};
+    }
+  }
+
   Future<List<PatientSummary>> fetchDoctorPatients() async {
     final session = await _getSessionContext();
     const path = '/doctors/';
     final endpoint = '$path${session.userId}/patients';
-    final response = await _safeGet(
+    final patientsFuture = _safeGet(
       endpoint,
       headers: {'Authorization': 'Bearer ${session.token}'},
     );
+    final countMapFuture = _fetchAppointmentCountMap(session);
+    final response = await patientsFuture;
+    final countMap = await countMapFuture;
     final data = _decodeJson(response);
 
     if (response.statusCode == 401) {
@@ -107,7 +135,7 @@ class PatientsService {
 
     return data
         .whereType<Map<String, dynamic>>()
-        .map(_parsePatientSummary)
+        .map((json) => _parsePatientSummary(json, countMap: countMap))
         .toList();
   }
 
@@ -212,7 +240,10 @@ class PatientsService {
     return null;
   }
 
-  PatientSummary _parsePatientSummary(Map<String, dynamic> json) {
+  PatientSummary _parsePatientSummary(
+    Map<String, dynamic> json, {
+    Map<int, int> countMap = const {},
+  }) {
     final id = _parseInt(json['id']);
     final firstName = json['first_name']?.toString().trim() ?? '';
     final lastName = json['last_name']?.toString().trim() ?? '';
@@ -222,10 +253,6 @@ class PatientsService {
         : DateTime.tryParse(birthDateRaw);
     final cin = json['cin']?.toString().trim().toUpperCase() ?? '';
     final code = json['patient_code']?.toString().trim();
-    final createdAtRaw = json['created_at']?.toString();
-    final createdAt = createdAtRaw == null
-        ? null
-        : DateTime.tryParse(createdAtRaw);
 
     if (id == null ||
         birthDate == null ||
@@ -237,6 +264,8 @@ class PatientsService {
       );
     }
 
+    final apptCount = countMap[id] ?? 0;
+
     return PatientSummary(
       id: id,
       code: (code == null || code.isEmpty) ? 'P-$id' : code,
@@ -244,19 +273,12 @@ class PatientsService {
       lastName: lastName,
       cin: cin,
       birthDate: birthDate,
-      status: _resolveStatus(createdAt),
+      status: _resolveStatus(apptCount),
     );
   }
 
-  PatientStatus _resolveStatus(DateTime? createdAt) {
-    if (createdAt == null) {
-      return PatientStatus.suivi;
-    }
-    final diff = DateTime.now().difference(createdAt.toLocal());
-    if (diff.inDays <= 30) {
-      return PatientStatus.nouveau;
-    }
-    return PatientStatus.suivi;
+  PatientStatus _resolveStatus(int appointmentCount) {
+    return appointmentCount >= 2 ? PatientStatus.suivi : PatientStatus.nouveau;
   }
 
   Future<_SessionContext> _getSessionContext() async {

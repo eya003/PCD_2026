@@ -13,6 +13,8 @@ class AppColors {
   static const Color textSecondary = Color(0xFF64748B);
   static const Color statusTeal = Color(0xFF0EA5A4);
   static const Color statusGreen = Color(0xFF10B981);
+  static const Color statusOrange = Color(0xFFD97706);
+  static const Color statusRed = Color(0xFFDC2626);
   static const Color statusGray = Color(0xFF94A3B8);
   static const Color error = Color(0xFFEF4444);
 }

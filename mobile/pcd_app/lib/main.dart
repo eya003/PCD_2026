@@ -58,6 +58,8 @@ class _PcdAppState extends State<PcdApp> {
               email: _session!.email,
               userId: _session!.userId,
               role: _session!.role,
+              firstName: _session!.firstName,
+              lastName: _session!.lastName,
               onLogout: _logout,
             ),
     );

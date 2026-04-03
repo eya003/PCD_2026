@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'patient_model.dart';
+import 'services/api_base_url.dart';
 
 class ApiException implements Exception {
   ApiException(this.message, {this.statusCode});
@@ -18,21 +18,14 @@ class ApiException implements Exception {
 
 class ApiClient {
   ApiClient({String? baseUrl, http.Client? httpClient})
-    : baseUrl = (baseUrl ?? _defaultBaseUrl()).replaceAll(RegExp(r'/$'), ''),
+    : baseUrl = resolveApiBaseUrl(overrideBaseUrl: baseUrl).replaceAll(
+        RegExp(r'/$'),
+        '',
+      ),
       _httpClient = httpClient ?? http.Client();
 
   final String baseUrl;
   final http.Client _httpClient;
-
-  static String _defaultBaseUrl() {
-    const envBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
-    if (envBaseUrl.isNotEmpty) {
-      return envBaseUrl;
-    }
-
-    // Windows desktop + Web (same machine) -> localhost works.
-    return kIsWeb ? 'http://127.0.0.1:8000' : 'http://127.0.0.1:8000';
-  }
 
   Future<List<Patient>> getPatients() async {
     final response = await _httpClient.get(_uri('/patients/'));

@@ -28,6 +28,8 @@ class DashboardScreen extends StatefulWidget {
     required this.onAddPatient,
     required this.patientsRevision,
     required this.appointmentsRevision,
+    this.firstName = '',
+    this.lastName = '',
   });
 
   final VoidCallback onOpenPatients;
@@ -35,6 +37,8 @@ class DashboardScreen extends StatefulWidget {
   final VoidCallback onAddPatient;
   final ValueListenable<int> patientsRevision;
   final ValueNotifier<int> appointmentsRevision;
+  final String firstName;
+  final String lastName;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -149,7 +153,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _openCreateAppointmentFromCalendar() async {
+  Future<void> _openCreateAppointmentFromCalendar({DateTime? initialDate}) async {
     if (_patients.isEmpty) {
       _showSnackBar(
         'Ajoutez d abord un patient avant de creer un rendez-vous.',
@@ -159,7 +163,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (_) => CreateAppointmentScreen(selectablePatients: _patients),
+        builder: (_) => CreateAppointmentScreen(
+          selectablePatients: _patients,
+          initialDate: initialDate,
+        ),
       ),
     );
 
@@ -475,8 +482,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             builder: (context, constraints) {
               final isCompact = constraints.maxWidth < 760;
               if (!isCompact) {
+                final greetTitle = (widget.firstName.trim().isNotEmpty || widget.lastName.trim().isNotEmpty)
+                    ? 'Bonjour Dr. ${widget.firstName} ${widget.lastName}'.trim()
+                    : 'Bonjour Docteur';
                 return AppHeader(
-                  title: 'Dashboard medecin',
+                  title: greetTitle,
                   subtitle:
                       'Vue rapide patients, rendez-vous, alertes et module IA.',
                   actions: [
@@ -505,8 +515,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const AppHeader(
-                    title: 'Dashboard medecin',
+                  AppHeader(
+                    title: (widget.firstName.trim().isNotEmpty || widget.lastName.trim().isNotEmpty)
+                        ? 'Bonjour Dr. ${widget.firstName} ${widget.lastName}'.trim()
+                        : 'Bonjour Docteur',
                     subtitle:
                         'Vue rapide patients, rendez-vous, alertes et module IA.',
                   ),
@@ -699,6 +711,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               day.year == today.year,
                           appointments: dayAppointments,
                           onTapAppointment: _showAppointmentDetails,
+                          onTapDay: (d) => _openCreateAppointmentFromCalendar(initialDate: d),
                         );
                       },
                     ),
@@ -839,6 +852,7 @@ class _CalendarDayCell extends StatelessWidget {
     required this.isToday,
     required this.appointments,
     required this.onTapAppointment,
+    this.onTapDay,
   });
 
   final DateTime day;
@@ -846,6 +860,7 @@ class _CalendarDayCell extends StatelessWidget {
   final bool isToday;
   final List<AppointmentItem> appointments;
   final ValueChanged<AppointmentItem> onTapAppointment;
+  final ValueChanged<DateTime>? onTapDay;
 
   @override
   Widget build(BuildContext context) {
@@ -862,7 +877,9 @@ class _CalendarDayCell extends StatelessWidget {
     final visibleAppointments = appointments.take(2).toList();
     final remainingCount = appointments.length - visibleAppointments.length;
 
-    return Container(
+    return GestureDetector(
+      onTap: onTapDay != null ? () => onTapDay!(day) : null,
+      child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         color: bgColor,
@@ -924,6 +941,7 @@ class _CalendarDayCell extends StatelessWidget {
             ),
         ],
       ),
+    ),
     );
   }
 

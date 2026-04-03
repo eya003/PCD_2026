@@ -1,10 +1,10 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/user_role.dart';
+import 'api_base_url.dart';
 
 class AuthException implements Exception {
   const AuthException(this.message, {this.statusCode});
@@ -39,7 +39,10 @@ class AuthSession {
 class AuthService {
   AuthService({http.Client? httpClient, String? baseUrl})
     : _httpClient = httpClient ?? http.Client(),
-      _baseUrl = (baseUrl ?? _defaultBaseUrl()).replaceAll(RegExp(r'/$'), '');
+      _baseUrl = resolveApiBaseUrl(overrideBaseUrl: baseUrl).replaceAll(
+        RegExp(r'/$'),
+        '',
+      );
 
   final http.Client _httpClient;
   final String _baseUrl;
@@ -53,14 +56,6 @@ class AuthService {
   static const _lastNameKey = 'auth_last_name';
 
   String get baseUrl => _baseUrl;
-
-  static String _defaultBaseUrl() {
-    const envUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
-    if (envUrl.isNotEmpty) {
-      return envUrl;
-    }
-    return kIsWeb ? 'http://localhost:8000' : 'http://127.0.0.1:8000';
-  }
 
   Future<AuthSession?> restoreSession() async {
     final prefs = await SharedPreferences.getInstance();
