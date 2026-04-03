@@ -1,0 +1,4 @@
+git add .
+git commit -m "message"
+git push 
+ seulement pour cree iune nouvelle branhce (git push -u origin fatmadev)

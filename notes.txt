@@ -1,0 +1,27 @@
+1) Relancer le Backend
+cd backend
+venv\Scripts\activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+http://127.0.0.1:8000/docs
+2) Relancer le Frontend
+cd mobile/pcd_app
+flutter run -d chrome
+
+
+*****surr telephone web *****
+Lancer le backend
+Trouver l’IP de ton PC(IPv4 )
+Ouvrir sur téléphone: http://ip:8000/docs
+Lancer Flutter Web pour réseau
+flutter run -d chrome --web-hostname 0.0.0.0 --web-port 5000
+sur téléphone: http://ip:5000
+*****surr telephone app*****
+Lancer le backend
+Active Developer Mode sur téléphone
+Active USB debugging
+Branche USB
+Tape :
+flutter devices
+Tu dois voir ton téléphone.
+Puis lance :
+flutter run
