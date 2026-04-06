@@ -90,7 +90,17 @@ def transfer_family_admin(
             patient_id=payload.patient_id,
             new_admin_user_id=payload.new_admin_user_id,
         )
-    except IntegrityError:
+    except IntegrityError as exc:
+        constraint_name = getattr(
+            getattr(getattr(exc, "orig", None), "diag", None),
+            "constraint_name",
+            None,
+        )
+        if constraint_name == "family_one_admin_per_patient":
+            raise HTTPException(
+                status_code=409,
+                detail="An admin already exists for this patient",
+            ) from None
         raise HTTPException(status_code=400, detail="Unable to transfer admin") from None
 
     if updated_link is None:

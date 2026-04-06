@@ -325,146 +325,12 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
   }
 
   Future<void> _openAddAllergyDialog() async {
-    final formKey = GlobalKey<FormState>();
-    final allergenController = TextEditingController();
-    final reactionController = TextEditingController();
-    final notesController = TextEditingController();
-    var severity = PatientAllergy.severityModerate;
-
     final payload = await showDialog<_AllergyDialogPayload>(
       context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setLocalState) {
-            return Dialog(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.lg),
-                  child: Form(
-                    key: formKey,
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Ajouter allergie',
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: AppSpacing.md),
-                          TextFormField(
-                            controller: allergenController,
-                            decoration: const InputDecoration(
-                              labelText: 'Allergene',
-                              prefixIcon: Icon(Icons.warning_amber_outlined),
-                            ),
-                            validator: (value) {
-                              if ((value ?? '').trim().isEmpty) {
-                                return 'Allergene obligatoire';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: AppSpacing.sm),
-                          TextFormField(
-                            controller: reactionController,
-                            decoration: const InputDecoration(
-                              labelText: 'Reaction',
-                              prefixIcon: Icon(Icons.healing_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: AppSpacing.sm),
-                          DropdownButtonFormField<String>(
-                            value: severity,
-                            items: const [
-                              DropdownMenuItem(
-                                value: PatientAllergy.severityLow,
-                                child: Text('Faible'),
-                              ),
-                              DropdownMenuItem(
-                                value: PatientAllergy.severityModerate,
-                                child: Text('Moderee'),
-                              ),
-                              DropdownMenuItem(
-                                value: PatientAllergy.severityHigh,
-                                child: Text('Elevee'),
-                              ),
-                              DropdownMenuItem(
-                                value: PatientAllergy.severityCritical,
-                                child: Text('Critique'),
-                              ),
-                            ],
-                            onChanged: (value) {
-                              if (value == null) return;
-                              setLocalState(() => severity = value);
-                            },
-                            decoration: const InputDecoration(
-                              labelText: 'Severite',
-                              prefixIcon: Icon(Icons.report_problem_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: AppSpacing.sm),
-                          TextFormField(
-                            controller: notesController,
-                            minLines: 2,
-                            maxLines: 4,
-                            decoration: const InputDecoration(
-                              labelText: 'Notes',
-                              alignLabelWithHint: true,
-                              prefixIcon: Icon(Icons.note_alt_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: AppSpacing.lg),
-                          Wrap(
-                            alignment: WrapAlignment.end,
-                            spacing: AppSpacing.sm,
-                            runSpacing: AppSpacing.sm,
-                            children: [
-                              TextButton(
-                                onPressed: () => Navigator.of(context).pop(),
-                                child: const Text('Annuler'),
-                              ),
-                              FilledButton.icon(
-                                onPressed: () {
-                                  if (!(formKey.currentState?.validate() ??
-                                      false)) {
-                                    return;
-                                  }
-                                  Navigator.of(context).pop(
-                                    _AllergyDialogPayload(
-                                      allergen:
-                                          allergenController.text.trim(),
-                                      reaction:
-                                          reactionController.text.trim(),
-                                      severity: severity,
-                                      notes: notesController.text.trim(),
-                                    ),
-                                  );
-                                },
-                                icon: const Icon(Icons.add),
-                                label: const Text('Ajouter'),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
+      builder: (_) => const _AddAllergyDialog(),
     );
 
-    allergenController.dispose();
-    reactionController.dispose();
-    notesController.dispose();
-
-    if (payload == null) return;
+    if (!mounted || payload == null) return;
 
     try {
       await _treatmentsService.addAllergy(
@@ -2380,6 +2246,157 @@ class _DialogField extends StatelessWidget {
 enum _MedicationMenuAction { markCompleted, cancel, markTaken, markMissed }
 
 enum _AppointmentMenuAction { edit, markCompleted, delete }
+
+class _AddAllergyDialog extends StatefulWidget {
+  const _AddAllergyDialog();
+
+  @override
+  State<_AddAllergyDialog> createState() => _AddAllergyDialogState();
+}
+
+class _AddAllergyDialogState extends State<_AddAllergyDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _allergenController = TextEditingController();
+  final _reactionController = TextEditingController();
+  final _notesController = TextEditingController();
+  String _severity = PatientAllergy.severityModerate;
+
+  @override
+  void dispose() {
+    _allergenController.dispose();
+    _reactionController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    final payload = _AllergyDialogPayload(
+      allergen: _allergenController.text.trim(),
+      reaction: _reactionController.text.trim(),
+      severity: _severity,
+      notes: _notesController.text.trim(),
+    );
+
+    // Keep widget teardown safe by clearing inputs before closing the route.
+    _allergenController.clear();
+    _reactionController.clear();
+    _notesController.clear();
+
+    if (!mounted) return;
+    Navigator.of(context).pop(payload);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Form(
+            key: _formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Ajouter allergie',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  TextFormField(
+                    controller: _allergenController,
+                    decoration: const InputDecoration(
+                      labelText: 'Allergene',
+                      prefixIcon: Icon(Icons.warning_amber_outlined),
+                    ),
+                    validator: (value) {
+                      if ((value ?? '').trim().isEmpty) {
+                        return 'Allergene obligatoire';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextFormField(
+                    controller: _reactionController,
+                    decoration: const InputDecoration(
+                      labelText: 'Reaction',
+                      prefixIcon: Icon(Icons.healing_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  DropdownButtonFormField<String>(
+                    value: _severity,
+                    items: const [
+                      DropdownMenuItem(
+                        value: PatientAllergy.severityLow,
+                        child: Text('Faible'),
+                      ),
+                      DropdownMenuItem(
+                        value: PatientAllergy.severityModerate,
+                        child: Text('Moderee'),
+                      ),
+                      DropdownMenuItem(
+                        value: PatientAllergy.severityHigh,
+                        child: Text('Elevee'),
+                      ),
+                      DropdownMenuItem(
+                        value: PatientAllergy.severityCritical,
+                        child: Text('Critique'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => _severity = value);
+                    },
+                    decoration: const InputDecoration(
+                      labelText: 'Severite',
+                      prefixIcon: Icon(Icons.report_problem_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextFormField(
+                    controller: _notesController,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'Notes',
+                      alignLabelWithHint: true,
+                      prefixIcon: Icon(Icons.note_alt_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.sm,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Annuler'),
+                      ),
+                      FilledButton.icon(
+                        onPressed: _submit,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Ajouter'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _AllergyDialogPayload {
   const _AllergyDialogPayload({

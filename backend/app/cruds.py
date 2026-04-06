@@ -453,12 +453,15 @@ def transfer_family_admin(db: Session, patient_id: int, new_admin_user_id: int):
         return None
 
     current_admin_link = get_family_admin_link(db, patient_id)
-    if current_admin_link and current_admin_link.user_id != new_admin_user_id:
-        current_admin_link.family_role = "viewer"
-
-    target_link.family_role = "admin"
-
     try:
+        # Important: demote current admin first and flush, otherwise the
+        # partial unique index (one admin per patient) can fail transiently
+        # when SQLAlchemy flushes UPDATE statements in PK order.
+        if current_admin_link and current_admin_link.user_id != new_admin_user_id:
+            current_admin_link.family_role = "viewer"
+            db.flush()
+
+        target_link.family_role = "admin"
         db.commit()
         db.refresh(target_link)
     except IntegrityError:

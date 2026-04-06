@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/user_role.dart';
+import 'family_service.dart';
 import 'api_base_url.dart';
 
 class AuthException implements Exception {
@@ -25,6 +28,7 @@ class AuthSession {
     required this.email,
     required this.firstName,
     required this.lastName,
+    this.familyRole = '',
   });
 
   final String token;
@@ -34,6 +38,12 @@ class AuthSession {
   final String email;
   final String firstName;
   final String lastName;
+  /// 'admin', 'viewer', or '' (unknown / not a family user).
+  /// Populated during registration. May be empty after logout + re-login
+  /// because the login endpoint does not return family_role.
+  final String familyRole;
+
+  bool get isFamilyAdmin => familyRole == 'admin';
 }
 
 class AuthService {
@@ -46,6 +56,7 @@ class AuthService {
 
   final http.Client _httpClient;
   final String _baseUrl;
+  static const Duration _requestTimeout = Duration(seconds: 20);
 
   static const _tokenKey = 'auth_token';
   static const _roleKey = 'auth_role';
@@ -54,6 +65,7 @@ class AuthService {
   static const _emailKey = 'auth_email';
   static const _firstNameKey = 'auth_first_name';
   static const _lastNameKey = 'auth_last_name';
+  static const _familyRoleKey = 'auth_family_role';
 
   String get baseUrl => _baseUrl;
 
@@ -80,6 +92,7 @@ class AuthService {
       email: prefs.getString(_emailKey) ?? '',
       firstName: prefs.getString(_firstNameKey) ?? '',
       lastName: prefs.getString(_lastNameKey) ?? '',
+      familyRole: prefs.getString(_familyRoleKey) ?? '',
     );
   }
 
@@ -119,8 +132,26 @@ class AuthService {
       throw const AuthException('Reponse login invalide.');
     }
 
-    final session = _parseSessionFromAuthPayload(data, fallbackCin: cin.trim());
+    var session = _parseSessionFromAuthPayload(data, fallbackCin: cin.trim());
     await _saveSession(session);
+
+    if (session.role == UserRole.family) {
+      final resolvedRole = await _resolveFamilyRoleAfterLogin();
+      if (resolvedRole.isNotEmpty) {
+        session = AuthSession(
+          token: session.token,
+          role: session.role,
+          userId: session.userId,
+          cin: session.cin,
+          email: session.email,
+          firstName: session.firstName,
+          lastName: session.lastName,
+          familyRole: resolvedRole,
+        );
+        await _saveSession(session);
+      }
+    }
+
     return session;
   }
 
@@ -196,11 +227,41 @@ class AuthService {
     // If backend returns token directly, consume it, otherwise auto-login.
     if (data is Map<String, dynamic> && data['access_token'] != null) {
       final session = _parseSessionFromAuthPayload(data, fallbackCin: cin.trim());
-      await _saveSession(session);
-      return session;
+      final enriched = (role == UserRole.family && (familyRole ?? '').isNotEmpty)
+          ? AuthSession(
+              token: session.token,
+              role: session.role,
+              userId: session.userId,
+              cin: session.cin,
+              email: session.email,
+              firstName: session.firstName,
+              lastName: session.lastName,
+              familyRole: familyRole!.trim(),
+            )
+          : session;
+      await _saveSession(enriched);
+      return enriched;
     }
 
-    return login(cin, password);
+    // Backend returned only a User object (201 Created) — perform login.
+    final loginSession = await login(cin, password);
+    if (role == UserRole.family && (familyRole ?? '').isNotEmpty) {
+      final enriched = AuthSession(
+        token: loginSession.token,
+        role: loginSession.role,
+        userId: loginSession.userId,
+        cin: loginSession.cin,
+        email: loginSession.email,
+        firstName: loginSession.firstName,
+        lastName: loginSession.lastName,
+        familyRole: familyRole!.trim(),
+      );
+      // Persist familyRole separately — login does not return it.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_familyRoleKey, familyRole.trim());
+      return enriched;
+    }
+    return loginSession;
   }
 
   Future<Map<String, dynamic>> getMe(String token) async {
@@ -227,6 +288,7 @@ class AuthService {
     await prefs.remove(_emailKey);
     await prefs.remove(_firstNameKey);
     await prefs.remove(_lastNameKey);
+    await prefs.remove(_familyRoleKey);
   }
 
   Future<void> _saveSession(AuthSession session) async {
@@ -238,6 +300,24 @@ class AuthService {
     await prefs.setString(_emailKey, session.email);
     await prefs.setString(_firstNameKey, session.firstName);
     await prefs.setString(_lastNameKey, session.lastName);
+    if (session.familyRole.isNotEmpty) {
+      await prefs.setString(_familyRoleKey, session.familyRole);
+    } else {
+      await prefs.remove(_familyRoleKey);
+    }
+  }
+
+  Future<String> _resolveFamilyRoleAfterLogin() async {
+    try {
+      final role = await FamilyService(
+        httpClient: _httpClient,
+        baseUrl: _baseUrl,
+      ).fetchCurrentFamilyRole();
+      return role.trim().toLowerCase();
+    } catch (e) {
+      debugPrint('AuthService: unable to resolve family role after login: $e');
+      return '';
+    }
   }
 
   AuthSession _parseSessionFromAuthPayload(
@@ -284,15 +364,25 @@ class AuthService {
     String path, {
     required Map<String, dynamic> body,
   }) async {
+    final uri = _uri(path);
+    debugPrint('AuthService → POST $uri');
     try {
-      return await _httpClient.post(
-        _uri(path),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
-    } on http.ClientException {
+      final response = await _httpClient
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(_requestTimeout);
+      debugPrint('AuthService ← ${response.statusCode} $uri');
+      return response;
+    } on TimeoutException {
+      throw const AuthException('La requete a expire. Verifiez votre connexion.');
+    } on http.ClientException catch (e) {
+      debugPrint('AuthService ✗ ClientException POST $uri: $e');
       throw const AuthException('Erreur reseau. Verifiez votre connexion.');
-    } catch (_) {
+    } catch (e) {
+      debugPrint('AuthService ✗ Unexpected POST $uri: $e');
       throw const AuthException('Erreur reseau. Verifiez votre connexion.');
     }
   }
@@ -301,11 +391,21 @@ class AuthService {
     String path, {
     Map<String, String>? headers,
   }) async {
+    final uri = _uri(path);
+    debugPrint('AuthService → GET $uri');
     try {
-      return await _httpClient.get(_uri(path), headers: headers);
-    } on http.ClientException {
+      final response = await _httpClient
+          .get(uri, headers: headers)
+          .timeout(_requestTimeout);
+      debugPrint('AuthService ← ${response.statusCode} $uri');
+      return response;
+    } on TimeoutException {
+      throw const AuthException('La requete a expire. Verifiez votre connexion.');
+    } on http.ClientException catch (e) {
+      debugPrint('AuthService ✗ ClientException GET $uri: $e');
       throw const AuthException('Erreur reseau. Verifiez votre connexion.');
-    } catch (_) {
+    } catch (e) {
+      debugPrint('AuthService ✗ Unexpected GET $uri: $e');
       throw const AuthException('Erreur reseau. Verifiez votre connexion.');
     }
   }

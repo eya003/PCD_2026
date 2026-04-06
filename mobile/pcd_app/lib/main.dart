@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'models/user_role.dart';
 import 'navigation/main_shell.dart';
 import 'screens/auth_screen.dart';
+import 'screens/family/family_shell.dart';
 import 'services/auth_service.dart';
 import 'theme/app_theme.dart';
 
@@ -54,14 +56,23 @@ class _PcdAppState extends State<PcdApp> {
                 setState(() => _session = session);
               },
             )
-          : MainShell(
-              email: _session!.email,
-              userId: _session!.userId,
-              role: _session!.role,
-              firstName: _session!.firstName,
-              lastName: _session!.lastName,
-              onLogout: _logout,
-            ),
+          : _session!.role == UserRole.family
+              ? FamilyShell(
+                  userId: _session!.userId,
+                  email: _session!.email,
+                  firstName: _session!.firstName,
+                  lastName: _session!.lastName,
+                  familyRole: _session!.familyRole,
+                  onLogout: _logout,
+                )
+              : MainShell(
+                  email: _session!.email,
+                  userId: _session!.userId,
+                  role: _session!.role,
+                  firstName: _session!.firstName,
+                  lastName: _session!.lastName,
+                  onLogout: _logout,
+                ),
     );
   }
 }

@@ -37,7 +37,7 @@ AppointmentStatus = Literal["scheduled", "done", "cancelled", "missed"]
 PrescriptionStatus = Literal["active", "completed", "cancelled"]
 MedicationStatus = Literal["active", "completed", "cancelled"]
 MedicationIntakeStatus = Literal["taken", "missed"]
-AllergySeverity = Literal["low", "moderate", "high", "critical"]
+AllergySeverity = str  # Changed from Literal to str to prevent 500 validation errors on legacy data
 
 
 class UserBase(BaseModel):
@@ -333,7 +333,7 @@ class MedicationIntakeCreate(MedicationIntakeBase):
 
 class MedicationIntake(MedicationIntakeBase):
     id: int
-    validated_by: int
+    validated_by: int | None = None
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -1,19 +1,24 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../../models/patient_summary.dart';
 import '../../services/family_service.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/empty_state.dart';
+import 'family_patient_screen.dart';
 
 /// Main dashboard for family users.
-/// Loads and displays the patients linked to the logged-in family member.
+/// Loads linked patients and opens the patient detail on tap.
 class FamilyHomeScreen extends StatefulWidget {
   const FamilyHomeScreen({
     super.key,
     required this.firstName,
+    required this.lastName,
+    required this.isAdmin,
   });
 
   final String firstName;
+  final String lastName;
+  final bool isAdmin;
 
   @override
   State<FamilyHomeScreen> createState() => _FamilyHomeScreenState();
@@ -25,6 +30,10 @@ class _FamilyHomeScreenState extends State<FamilyHomeScreen> {
   bool _isLoading = true;
   String? _error;
   List<PatientSummary> _patients = const [];
+
+  /// True once we have auto-navigated to the single patient.
+  /// Prevents re-navigation on rebuild or after the user presses back.
+  bool _hasAutoNavigated = false;
 
   @override
   void initState() {
@@ -45,6 +54,17 @@ class _FamilyHomeScreenState extends State<FamilyHomeScreen> {
         _patients = patients;
         _isLoading = false;
       });
+      // If exactly one patient and we have not auto-navigated yet this session,
+      // navigate directly after the current frame renders (avoids flash of list).
+      if (patients.length == 1 && !_hasAutoNavigated) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_hasAutoNavigated) {
+            debugPrint('FamilyHome: single patient detected - auto-navigating.');
+            _hasAutoNavigated = true;
+            _openPatient(patients.first);
+          }
+        });
+      }
     } on FamilyException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -60,6 +80,21 @@ class _FamilyHomeScreenState extends State<FamilyHomeScreen> {
     }
   }
 
+  void _openPatient(PatientSummary patient) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FamilyPatientScreen(
+          patient: patient,
+          currentUserId: 0,
+          isAdmin: widget.isAdmin,
+          familyFirstName: widget.firstName,
+          familyLastName: widget.lastName,
+          onFamilyRoleChanged: (_) {},
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -72,7 +107,6 @@ class _FamilyHomeScreenState extends State<FamilyHomeScreen> {
       child: ListView(
         padding: const EdgeInsets.all(AppSpacing.md),
         children: [
-          // ── Greeting ─────────────────────────────────────
           Text(
             greeting,
             style: theme.textTheme.headlineMedium?.copyWith(
@@ -87,9 +121,14 @@ class _FamilyHomeScreenState extends State<FamilyHomeScreen> {
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
-
-          // ── Patient section ───────────────────────────────
           if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.only(top: AppSpacing.xl),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          // Single patient: keep spinner visible while auto-navigation is pending
+          // to avoid a flash of the card before the push completes.
+          else if (_patients.length == 1 && !_hasAutoNavigated)
             const Padding(
               padding: EdgeInsets.only(top: AppSpacing.xl),
               child: Center(child: CircularProgressIndicator()),
@@ -104,10 +143,14 @@ class _FamilyHomeScreenState extends State<FamilyHomeScreen> {
             const EmptyState(
               icon: Icons.person_search_outlined,
               title: 'Aucun patient lie',
-              message: 'Aucun patient n est associe a votre compte pour le moment.',
+              message: 'Aucun patient n est associe a votre compte.',
             )
           else if (_patients.length == 1)
-            _PatientSummaryCard(patient: _patients.first)
+            // User returned from patient screen - show the card so they can re-enter.
+            _PatientCard(
+              patient: _patients.first,
+              onTap: () => _openPatient(_patients.first),
+            )
           else ...[
             Text(
               'Vos patients (${_patients.length})',
@@ -119,7 +162,10 @@ class _FamilyHomeScreenState extends State<FamilyHomeScreen> {
             ..._patients.map(
               (p) => Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                child: _PatientSummaryCard(patient: p),
+                child: _PatientCard(
+                  patient: p,
+                  onTap: () => _openPatient(p),
+                ),
               ),
             ),
           ],
@@ -129,12 +175,11 @@ class _FamilyHomeScreenState extends State<FamilyHomeScreen> {
   }
 }
 
-// ── Patient card ──────────────────────────────────────────────────────────────
-
-class _PatientSummaryCard extends StatelessWidget {
-  const _PatientSummaryCard({required this.patient});
+class _PatientCard extends StatelessWidget {
+  const _PatientCard({required this.patient, required this.onTap});
 
   final PatientSummary patient;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -142,94 +187,55 @@ class _PatientSummaryCard extends StatelessWidget {
     final colorScheme = theme.colorScheme;
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── Identity row ──────────────────────────────
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: colorScheme.primaryContainer,
-                  child: Text(
-                    patient.firstName.trim().isNotEmpty
-                        ? patient.firstName.trim().substring(0, 1).toUpperCase()
-                        : '?',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      color: colorScheme.onPrimaryContainer,
-                      fontWeight: FontWeight.w700,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 26,
+                backgroundColor: colorScheme.primaryContainer,
+                child: Text(
+                  patient.firstName.trim().isNotEmpty
+                      ? patient.firstName.trim().substring(0, 1).toUpperCase()
+                      : '?',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: colorScheme.onPrimaryContainer,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      patient.fullName,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        patient.fullName,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${patient.age} ans  -  CIN : ${patient.cin}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'CIN : ${patient.cin}',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-
-            // ── Details row ───────────────────────────────
-            Row(
-              children: [
-                _InfoChip(
-                  icon: Icons.cake_outlined,
-                  label: '${patient.age} ans',
-                ),
-              ],
-            ),
-
-            // ── Future sections placeholder ───────────────
-            // Rendez-vous, traitements, localisation, alertes
-            // seront ajoutés dans les sprints suivants.
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 15, color: colorScheme.onSurfaceVariant),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }

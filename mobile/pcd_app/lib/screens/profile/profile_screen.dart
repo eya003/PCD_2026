@@ -26,7 +26,9 @@ class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fullName = '${firstName.trim()} ${lastName.trim()}'.trim();
-    final displayName = fullName.isNotEmpty ? 'Dr. $fullName' : 'Docteur';
+    final displayName = fullName.isNotEmpty
+        ? (role == UserRole.doctor ? 'Dr. $fullName' : fullName)
+        : (role == UserRole.doctor ? 'Docteur' : 'Famille');
     final initial = firstName.trim().isNotEmpty
         ? firstName.trim().substring(0, 1).toUpperCase()
         : (email.trim().isNotEmpty ? email.trim().substring(0, 1).toUpperCase() : 'D');
