@@ -1259,6 +1259,50 @@ def get_last_location_for_patient(db: Session, patient_id: int):
     )
 
 
+def get_patient_safe_zone(db: Session, patient_id: int):
+    return (
+        db.query(models.PatientSafeZone)
+        .filter(models.PatientSafeZone.patient_id == patient_id)
+        .first()
+    )
+
+
+def upsert_patient_safe_zone(
+    db: Session,
+    *,
+    patient_id: int,
+    origin_latitude: float,
+    origin_longitude: float,
+    radius_meters: float,
+    updated_by: int | None,
+):
+    safe_zone = get_patient_safe_zone(db, patient_id=patient_id)
+    if safe_zone is None:
+        safe_zone = models.PatientSafeZone(
+            patient_id=patient_id,
+            origin_latitude=origin_latitude,
+            origin_longitude=origin_longitude,
+            radius_meters=radius_meters,
+            updated_by=updated_by,
+            updated_at=datetime.utcnow(),
+        )
+        db.add(safe_zone)
+    else:
+        safe_zone.origin_latitude = origin_latitude
+        safe_zone.origin_longitude = origin_longitude
+        safe_zone.radius_meters = radius_meters
+        safe_zone.updated_by = updated_by
+        safe_zone.updated_at = datetime.utcnow()
+
+    try:
+        db.commit()
+        db.refresh(safe_zone)
+    except IntegrityError:
+        db.rollback()
+        raise
+    return safe_zone
+
+
 def get_questionnaire(db: Session, questionnaire_id: int):
     return (
         db.query(models.Questionnaire)

@@ -270,6 +270,31 @@ class PatientLocation(Base):
     )
 
 
+class PatientSafeZone(Base):
+    __tablename__ = "patient_safe_zones"
+
+    patient_id = Column(
+        Integer,
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    origin_latitude = Column(Float, nullable=False)
+    origin_longitude = Column(Float, nullable=False)
+    radius_meters = Column(Float, nullable=False)
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_by = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+
 class Questionnaire(Base):
     __tablename__ = "questionnaires"
 

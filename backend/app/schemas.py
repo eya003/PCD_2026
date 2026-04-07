@@ -372,6 +372,22 @@ class PatientLocation(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PatientSafeZoneUpdate(BaseModel):
+    origin_latitude: float = Field(ge=-90, le=90)
+    origin_longitude: float = Field(ge=-180, le=180)
+    radius_meters: float = Field(gt=0)
+
+
+class PatientSafeZone(BaseModel):
+    patient_id: int
+    origin_latitude: float
+    origin_longitude: float
+    radius_meters: float
+    updated_at: datetime | None = None
+    updated_by: int | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
 class QuestionnaireBase(BaseModel):
     patient_id: int = Field(gt=0)
     filled_by: int | None = Field(default=None, gt=0)

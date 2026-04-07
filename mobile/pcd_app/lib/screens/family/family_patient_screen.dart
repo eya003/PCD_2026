@@ -178,7 +178,12 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
         ),
       );
 
-  void _openLocation() => _push(FamilyLocationScreen(patient: widget.patient));
+  void _openLocation() => _push(
+        FamilyLocationScreen(
+          patient: widget.patient,
+          isAdmin: _permissions.isAdmin,
+        ),
+      );
 
   Future<void> _openFamilyMembers() async {
     await Navigator.of(context).push(

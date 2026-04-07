@@ -23,6 +23,30 @@ def _ensure_patient_access(
         )
 
 
+def _ensure_family_admin_manage_safe_zone(
+    db: Session,
+    *,
+    current_user,
+    patient_id: int,
+):
+    if current_user.role != "family":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only family admin can update safe zone",
+        )
+
+    requester_link = cruds.get_family_patient_link(
+        db,
+        user_id=current_user.id,
+        patient_id=patient_id,
+    )
+    if requester_link is None or requester_link.family_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only family admin can update safe zone",
+        )
+
+
 @router.post("/", response_model=schemas.Patient, status_code=201)
 def create_patient(
     patient: schemas.PatientCreate,
@@ -346,6 +370,54 @@ def read_patient_last_location(patient_id: int, db: Session = Depends(get_db)):
     if location is None:
         raise HTTPException(status_code=404, detail="Location not found")
     return location
+
+
+@router.get("/{patient_id}/safe-zone", response_model=schemas.PatientSafeZone)
+def read_patient_safe_zone(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    patient = cruds.get_patient(db, patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    _ensure_patient_access(db, current_user=current_user, patient_id=patient_id)
+
+    safe_zone = cruds.get_patient_safe_zone(db=db, patient_id=patient_id)
+    if safe_zone is None:
+        raise HTTPException(status_code=404, detail="Safe zone not found")
+    return safe_zone
+
+
+@router.put("/{patient_id}/safe-zone", response_model=schemas.PatientSafeZone)
+def upsert_patient_safe_zone(
+    patient_id: int,
+    payload: schemas.PatientSafeZoneUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    patient = cruds.get_patient(db, patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    _ensure_family_admin_manage_safe_zone(
+        db,
+        current_user=current_user,
+        patient_id=patient_id,
+    )
+
+    try:
+        return cruds.upsert_patient_safe_zone(
+            db=db,
+            patient_id=patient_id,
+            origin_latitude=payload.origin_latitude,
+            origin_longitude=payload.origin_longitude,
+            radius_meters=payload.radius_meters,
+            updated_by=current_user.id,
+        )
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="Safe zone update conflict") from None
 
 
 @router.put("/{patient_id}", response_model=schemas.Patient)
