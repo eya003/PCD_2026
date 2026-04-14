@@ -2,14 +2,24 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../models/patient_location.dart';
 import '../../models/patient_safe_zone.dart';
 import '../../models/patient_summary.dart';
+import '../../services/alerts_service.dart';
 import '../../services/local_notification_service.dart';
 import '../../services/location_service.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/section_card.dart';
+import 'family_location_map_screen.dart';
+
+class _HistoryIntervalOption {
+  const _HistoryIntervalOption({required this.label, required this.duration});
+
+  final String label;
+  final Duration duration;
+}
 
 /// Displays location history and allows family admin to configure safe zone.
 class FamilyLocationScreen extends StatefulWidget {
@@ -28,6 +38,7 @@ class FamilyLocationScreen extends StatefulWidget {
 
 class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
   late final LocationService _service;
+  late final AlertsService _alertsService;
   late final TextEditingController _radiusController;
 
   bool _isLoading = true;
@@ -44,7 +55,21 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
   double? _selectedLatitude;
   double? _selectedLongitude;
 
-  static const Duration _trackingInterval = Duration(seconds: 30);
+  static const Duration _minimumTrackingInterval = Duration(minutes: 15);
+  static const Duration _trackingInterval = _minimumTrackingInterval;
+  static const int _maxHistoryInMemory = 200;
+  static const int _maxHistoryItemsOnScreen = 40;
+  static const List<_HistoryIntervalOption> _historyIntervalOptions = [
+    _HistoryIntervalOption(label: '15 min', duration: Duration(minutes: 15)),
+    _HistoryIntervalOption(label: '30 min', duration: Duration(minutes: 30)),
+    _HistoryIntervalOption(label: '1 h', duration: Duration(hours: 1)),
+    _HistoryIntervalOption(label: '3 h', duration: Duration(hours: 3)),
+    _HistoryIntervalOption(label: '6 h', duration: Duration(hours: 6)),
+    _HistoryIntervalOption(label: '12 h', duration: Duration(hours: 12)),
+    _HistoryIntervalOption(label: '24 h', duration: Duration(hours: 24)),
+  ];
+
+  Duration _selectedHistoryInterval = const Duration(hours: 24);
   Timer? _trackingTimer;
   bool _isTracking = false;
   bool _isSamplingPosition = false;
@@ -54,10 +79,63 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
   double? _currentDistanceMeters;
   bool? _isOutOfZone;
 
+  LatLng? get _currentTrackedPosition {
+    if (_currentLatitude != null && _currentLongitude != null) {
+      return LatLng(_currentLatitude!, _currentLongitude!);
+    }
+    final last = _lastLocation;
+    if (last != null) {
+      return LatLng(last.latitude, last.longitude);
+    }
+    return null;
+  }
+
+  LatLng? get _safeZoneOrigin {
+    final zone = _safeZone;
+    if (zone == null) return null;
+    return LatLng(zone.originLatitude, zone.originLongitude);
+  }
+
+  Duration get _effectiveTrackingInterval {
+    if (_trackingInterval < _minimumTrackingInterval) {
+      return _minimumTrackingInterval;
+    }
+    return _trackingInterval;
+  }
+
+  Duration get _effectiveHistoryInterval {
+    if (_selectedHistoryInterval < _minimumTrackingInterval) {
+      return _minimumTrackingInterval;
+    }
+    return _selectedHistoryInterval;
+  }
+
+  List<PatientLocation> get _sortedHistory {
+    final sorted = List<PatientLocation>.from(_history);
+    sorted.sort((a, b) => b.recordedAt.compareTo(a.recordedAt));
+    return sorted;
+  }
+
+  String _formatIntervalLabel(Duration value) {
+    final minutes = value.inMinutes;
+    if (minutes < 60) return '$minutes min';
+    final hours = minutes ~/ 60;
+    return '$hours h';
+  }
+
+  String _formatRelativeTime(DateTime value, DateTime now) {
+    final delta = now.difference(value);
+    if (delta.inMinutes <= 0) return 'A l instant';
+    if (delta.inMinutes < 60) return 'Il y a ${delta.inMinutes} min';
+    if (delta.inHours < 24) return 'Il y a ${delta.inHours} h';
+    return 'Il y a ${delta.inDays} j';
+  }
+
   @override
   void initState() {
     super.initState();
     _service = LocationService();
+    _alertsService = AlertsService();
     _radiusController = TextEditingController();
     _load();
   }
@@ -83,7 +161,9 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
     String? safeZoneError;
 
     try {
-      lastLocation = await _service.fetchLastLocation(patientId: widget.patient.id);
+      lastLocation = await _service.fetchLastLocation(
+        patientId: widget.patient.id,
+      );
     } on LocationException catch (e) {
       if (e.statusCode == 401) {
         message = e.message;
@@ -95,7 +175,9 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
     }
 
     try {
-      history = await _service.fetchLocationHistory(patientId: widget.patient.id);
+      history = await _service.fetchLocationHistory(
+        patientId: widget.patient.id,
+      );
     } on LocationException catch (e) {
       if (e.statusCode == 401) {
         message ??= e.message;
@@ -159,7 +241,9 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
   }) async {
     final enabled = await Geolocator.isLocationServiceEnabled();
     if (!enabled) {
-      onError('GPS desactive. Activez la localisation du telephone puis reessayez.');
+      onError(
+        'GPS desactive. Activez la localisation du telephone puis reessayez.',
+      );
       return null;
     }
 
@@ -169,7 +253,9 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
     }
 
     if (permission == LocationPermission.denied) {
-      onError('Permission de localisation refusee. Autorisez-la pour continuer.');
+      onError(
+        'Permission de localisation refusee. Autorisez-la pour continuer.',
+      );
       return null;
     }
 
@@ -241,7 +327,9 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
 
     final radius = _parseRadiusMeters();
     if (radius == null || radius <= 0) {
-      setState(() => _safeZoneError = 'Rayon invalide. Saisissez un nombre > 0.');
+      setState(
+        () => _safeZoneError = 'Rayon invalide. Saisissez un nombre > 0.',
+      );
       return;
     }
 
@@ -316,7 +404,7 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
     if (!mounted || !started) return;
 
     _trackingTimer?.cancel();
-    _trackingTimer = Timer.periodic(_trackingInterval, (_) {
+    _trackingTimer = Timer.periodic(_effectiveTrackingInterval, (_) {
       _collectAndEvaluatePosition();
     });
     setState(() => _isTracking = true);
@@ -375,7 +463,7 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
             recordedAt: DateTime.now(),
           ),
           ..._history,
-        ].take(30).toList();
+        ].take(_maxHistoryInMemory).toList();
         _lastLocation = PatientLocation(
           id: _lastLocation?.id ?? 0,
           latitude: position.latitude,
@@ -399,6 +487,17 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
           distanceMeters: distanceMeters,
           radiusMeters: zone.radiusMeters,
         );
+        try {
+          await _alertsService.createSafeZoneExitAlert(
+            patientId: widget.patient.id,
+            distanceMeters: distanceMeters,
+            radiusMeters: zone.radiusMeters,
+          );
+        } on AlertsException catch (e) {
+          debugPrint('FamilyLocationScreen: alert create failed: ${e.message}');
+        } catch (e) {
+          debugPrint('FamilyLocationScreen: alert create unexpected: $e');
+        }
       }
 
       return true;
@@ -440,6 +539,136 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _openExpandedMap() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FamilyLocationMapScreen(
+          patientName: widget.patient.firstName,
+          currentPosition: _currentTrackedPosition,
+          originPosition: _safeZoneOrigin,
+          radiusMeters: _safeZone?.radiusMeters,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniMapSection() {
+    return SectionCard(
+      title: 'Carte de localisation',
+      child: FamilyLocationMiniMapCard(
+        currentPosition: _currentTrackedPosition,
+        originPosition: _safeZoneOrigin,
+        radiusMeters: _safeZone?.radiusMeters,
+        onOpenExpanded: _openExpandedMap,
+      ),
+    );
+  }
+
+  void _selectHistoryInterval(Duration value) {
+    final clamped = value < _minimumTrackingInterval
+        ? _minimumTrackingInterval
+        : value;
+    if (clamped == _selectedHistoryInterval) return;
+    setState(() => _selectedHistoryInterval = clamped);
+  }
+
+  Widget _buildHistorySection() {
+    final now = DateTime.now();
+    final interval = _effectiveHistoryInterval;
+    final cutoff = now.subtract(interval);
+    final sortedHistory = _sortedHistory;
+    final historyInWindow = sortedHistory.where(
+      (location) => !location.recordedAt.isBefore(cutoff),
+    );
+    final inWindow = historyInWindow.toList();
+    final visibleHistory = inWindow.take(_maxHistoryItemsOnScreen).toList();
+    final hiddenCount = inWindow.length - visibleHistory.length;
+    final highlighted = visibleHistory.isEmpty ? null : visibleHistory.first;
+    final remaining = visibleHistory.length > 1
+        ? visibleHistory.sublist(1)
+        : const <PatientLocation>[];
+
+    return SectionCard(
+      title: 'Historique des positions',
+      action: Text(
+        '${visibleHistory.length}/${inWindow.length}',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Affichage des positions sur ${_formatIntervalLabel(interval)} (plus recent au plus ancien).',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          if (widget.isAdmin) ...[
+            Wrap(
+              spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
+              children: _historyIntervalOptions
+                  .map(
+                    (option) => ChoiceChip(
+                      label: Text(option.label),
+                      selected: option.duration == interval,
+                      onSelected: (_) =>
+                          _selectHistoryInterval(option.duration),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ] else ...[
+            _InlineInfoCard(
+              message:
+                  'Intervalle fixe: ${_formatIntervalLabel(interval)}. La selection d intervalle est reservee a l administrateur.',
+            ),
+          ],
+          const SizedBox(height: AppSpacing.sm),
+          if (visibleHistory.isEmpty)
+            _EmptySectionMessage(
+              icon: Icons.history_outlined,
+              title: 'Historique vide sur ${_formatIntervalLabel(interval)}',
+              message:
+                  'Aucune localisation disponible sur cet intervalle. Essayez une periode plus large.',
+            )
+          else ...[
+            if (highlighted != null)
+              _HistoryHighlightCard(
+                location: highlighted,
+                relativeTime: _formatRelativeTime(highlighted.recordedAt, now),
+              ),
+            if (remaining.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              ...remaining.map(
+                (location) => Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                  child: _HistoryLocationCard(
+                    location: location,
+                    relativeTime: _formatRelativeTime(location.recordedAt, now),
+                  ),
+                ),
+              ),
+            ],
+            if (hiddenCount > 0) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '$hiddenCount position(s) supplementaire(s) non affichee(s) pour garder un ecran lisible.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildSafeZoneSection() {
     final zone = _safeZone;
     final canEdit = widget.isAdmin;
@@ -459,7 +688,8 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
               )
             : _SafeZoneSummary(
                 safeZone: zone,
-                readOnlyMessage: 'Lecture seule: configuration reservee a l administrateur.',
+                readOnlyMessage:
+                    'Lecture seule: configuration reservee a l administrateur.',
               ),
       );
     }
@@ -486,8 +716,8 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
                 ? 'Configurez la zone de securite de ce patient.'
                 : 'Mettez a jour la position d origine et le rayon autorise.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: AppSpacing.sm),
           _SafeZoneFieldRow(
@@ -565,8 +795,8 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
             Text(
               'Selectionnez une position GPS et saisissez un rayon > 0 pour activer l enregistrement.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
           if (_safeZoneMessage != null) ...[
@@ -597,7 +827,8 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
         child: _EmptySectionMessage(
           icon: Icons.gps_not_fixed_outlined,
           title: 'Zone non configuree',
-          message: 'Configurez d abord la zone de securite pour demarrer le suivi.',
+          message:
+              'Configurez d abord la zone de securite pour demarrer le suivi.',
         ),
       );
     }
@@ -633,8 +864,8 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
     final statusColor = _isOutOfZone == null
         ? Theme.of(context).colorScheme.onSurfaceVariant
         : (outZone
-            ? Theme.of(context).colorScheme.error
-            : Colors.green.shade700);
+              ? Theme.of(context).colorScheme.error
+              : Colors.green.shade700);
 
     return SectionCard(
       title: 'Suivi de deplacement',
@@ -658,9 +889,9 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
                 Text(
                   _isSamplingPosition ? 'Lecture...' : 'Suivi actif',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: Colors.green.shade700,
-                      ),
+                    fontWeight: FontWeight.w700,
+                    color: Colors.green.shade700,
+                  ),
                 ),
               ],
             )
@@ -694,12 +925,21 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
             value: zone.formattedRadius,
           ),
           const SizedBox(height: 4),
+          _SafeZoneFieldRow(
+            icon: Icons.schedule_outlined,
+            label: 'Frequence',
+            value:
+                'Toutes les ${_formatIntervalLabel(_effectiveTrackingInterval)}',
+          ),
+          const SizedBox(height: 4),
           Row(
             children: [
               Icon(
                 outZone
                     ? Icons.warning_amber_outlined
-                    : (inZone ? Icons.check_circle_outline : Icons.info_outline),
+                    : (inZone
+                          ? Icons.check_circle_outline
+                          : Icons.info_outline),
                 size: 18,
                 color: statusColor,
               ),
@@ -707,9 +947,9 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
               Text(
                 'Statut: $statusText',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: statusColor,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  color: statusColor,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -719,7 +959,8 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
             runSpacing: AppSpacing.sm,
             children: [
               FilledButton.icon(
-                onPressed: _isTracking ||
+                onPressed:
+                    _isTracking ||
                         _isSamplingPosition ||
                         _isEditingSafeZone ||
                         _isSavingSafeZone ||
@@ -760,9 +1001,7 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Localisation - ${widget.patient.firstName}'),
-      ),
+      appBar: AppBar(title: Text('Localisation - ${widget.patient.firstName}')),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
@@ -779,6 +1018,8 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
                   _buildSafeZoneSection(),
                   const SizedBox(height: AppSpacing.md),
                   _buildTrackingSection(),
+                  const SizedBox(height: AppSpacing.md),
+                  _buildMiniMapSection(),
                   const SizedBox(height: AppSpacing.md),
                   if (_error != null) ...[
                     _InlineInfoCard(message: _error!),
@@ -799,29 +1040,7 @@ class _FamilyLocationScreenState extends State<FamilyLocationScreen> {
                           ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  SectionCard(
-                    title: 'Historique des positions',
-                    action: Text(
-                      '${_history.length} enregistrement${_history.length > 1 ? 's' : ''}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                          ),
-                    ),
-                    child: _history.isEmpty
-                        ? const _EmptySectionMessage(
-                            icon: Icons.history_outlined,
-                            title: 'Historique vide',
-                            message:
-                                'Aucune localisation disponible dans l historique.',
-                          )
-                        : Column(
-                            children: _history
-                                .map((loc) => _LocationRow(location: loc))
-                                .toList(),
-                          ),
-                  ),
+                  _buildHistorySection(),
                 ],
         ),
       ),
@@ -845,9 +1064,7 @@ class _SourceInfoBanner extends StatelessWidget {
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: colorScheme.secondary.withAlpha(77),
-        ),
+        side: BorderSide(color: colorScheme.secondary.withAlpha(77)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.md),
@@ -891,10 +1108,7 @@ class _SourceInfoBanner extends StatelessWidget {
 }
 
 class _SafeZoneSummary extends StatelessWidget {
-  const _SafeZoneSummary({
-    required this.safeZone,
-    this.readOnlyMessage,
-  });
+  const _SafeZoneSummary({required this.safeZone, this.readOnlyMessage});
 
   final PatientSafeZone safeZone;
   final String? readOnlyMessage;
@@ -974,9 +1188,7 @@ class _SafeZoneFieldRow extends StatelessWidget {
             ),
           ),
         ),
-        Expanded(
-          child: Text(value, style: theme.textTheme.bodyMedium),
-        ),
+        Expanded(child: Text(value, style: theme.textTheme.bodyMedium)),
       ],
     );
   }
@@ -1007,8 +1219,8 @@ class _InlineInfoCard extends StatelessWidget {
               child: Text(
                 message,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
+                  color: colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ],
@@ -1033,18 +1245,14 @@ class _InlineErrorCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(
-              Icons.error_outline,
-              size: 18,
-              color: colorScheme.error,
-            ),
+            Icon(Icons.error_outline, size: 18, color: colorScheme.error),
             const SizedBox(width: AppSpacing.xs),
             Expanded(
               child: Text(
                 message,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onErrorContainer,
-                    ),
+                  color: colorScheme.onErrorContainer,
+                ),
               ),
             ),
           ],
@@ -1081,16 +1289,16 @@ class _EmptySectionMessage extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   message,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -1102,10 +1310,7 @@ class _EmptySectionMessage extends StatelessWidget {
 }
 
 class _LocationDetail extends StatelessWidget {
-  const _LocationDetail({
-    required this.location,
-    this.isLatest = false,
-  });
+  const _LocationDetail({required this.location, this.isLatest = false});
 
   final PatientLocation location;
   final bool isLatest;
@@ -1116,27 +1321,25 @@ class _LocationDetail extends StatelessWidget {
     final colorScheme = theme.colorScheme;
 
     Widget row(IconData icon, String label, String value) => Padding(
-          padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-          child: Row(
-            children: [
-              Icon(icon, size: 18, color: colorScheme.primary),
-              const SizedBox(width: AppSpacing.xs),
-              SizedBox(
-                width: 100,
-                child: Text(
-                  label,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: colorScheme.primary),
+          const SizedBox(width: AppSpacing.xs),
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
               ),
-              Expanded(
-                child: Text(value, style: theme.textTheme.bodyMedium),
-              ),
-            ],
+            ),
           ),
-        );
+          Expanded(child: Text(value, style: theme.textTheme.bodyMedium)),
+        ],
+      ),
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1185,19 +1388,102 @@ class _LocationDetail extends StatelessWidget {
   }
 }
 
-class _LocationRow extends StatelessWidget {
-  const _LocationRow({required this.location});
+class _HistoryHighlightCard extends StatelessWidget {
+  const _HistoryHighlightCard({
+    required this.location,
+    required this.relativeTime,
+  });
 
   final PatientLocation location;
+  final String relativeTime;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: colorScheme.primaryContainer.withAlpha(90),
+        border: Border.all(color: colorScheme.primary.withAlpha(85)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.push_pin_outlined,
+                size: 18,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                'Derniere position affichee',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: colorScheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                relativeTime,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onPrimaryContainer.withAlpha(180),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            location.formattedCoords,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            location.formattedDateTime,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HistoryLocationCard extends StatelessWidget {
+  const _HistoryLocationCard({
+    required this.location,
+    required this.relativeTime,
+  });
+
+  final PatientLocation location;
+  final String relativeTime;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: 10,
+      ),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colorScheme.outlineVariant.withAlpha(160)),
+      ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
             Icons.share_location_outlined,
@@ -1206,15 +1492,31 @@ class _LocationRow extends StatelessWidget {
           ),
           const SizedBox(width: AppSpacing.xs),
           Expanded(
-            child: Text(
-              location.formattedCoords,
-              style: theme.textTheme.bodyMedium,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  location.formattedCoords,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  location.formattedDateTime,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ),
           ),
+          const SizedBox(width: AppSpacing.sm),
           Text(
-            location.formattedDateTime,
-            style: theme.textTheme.bodySmall?.copyWith(
+            relativeTime,
+            style: theme.textTheme.labelSmall?.copyWith(
               color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],

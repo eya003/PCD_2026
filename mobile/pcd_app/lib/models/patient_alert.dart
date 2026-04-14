@@ -35,6 +35,10 @@ class PatientAlert {
 
   String get typeLabelFr {
     switch (type.toLowerCase()) {
+      case 'geofence_exit':
+      case 'safe_zone_exit':
+      case 'location_outside_safe_zone':
+        return 'Localisation';
       case 'medication':
       case 'medication_missed':
         return 'Médicament';

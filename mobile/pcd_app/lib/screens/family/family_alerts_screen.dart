@@ -238,6 +238,12 @@ class _AlertCard extends StatelessWidget {
         typeColor = colorScheme.error;
         typeIcon = Icons.warning_amber_outlined;
         break;
+      case 'geofence_exit':
+      case 'safe_zone_exit':
+      case 'location_outside_safe_zone':
+        typeColor = Colors.red.shade700;
+        typeIcon = Icons.share_location_outlined;
+        break;
       case 'medication':
       case 'medication_missed':
         typeColor = Colors.orange.shade700;

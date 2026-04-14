@@ -281,10 +281,12 @@ def read_patient_locations(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     patient = cruds.get_patient(db, patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _ensure_patient_access(db, current_user=current_user, patient_id=patient_id)
     return cruds.get_locations_by_patient(db=db, patient_id=patient_id, skip=skip, limit=limit)
 
 
@@ -330,10 +332,12 @@ def read_patient_alerts(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     patient = cruds.get_patient(db, patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _ensure_patient_access(db, current_user=current_user, patient_id=patient_id)
     return cruds.get_alerts_by_patient(
         db=db,
         patient_id=patient_id,
@@ -361,10 +365,15 @@ def read_patient_medical_notes(
 
 
 @router.get("/{patient_id}/last-location", response_model=schemas.PatientLocation)
-def read_patient_last_location(patient_id: int, db: Session = Depends(get_db)):
+def read_patient_last_location(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     patient = cruds.get_patient(db, patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _ensure_patient_access(db, current_user=current_user, patient_id=patient_id)
 
     location = cruds.get_last_location_for_patient(db=db, patient_id=patient_id)
     if location is None:

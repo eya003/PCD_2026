@@ -112,6 +112,82 @@ class AlertsService {
     return alerts;
   }
 
+  /// Creates a backend alert when safe-zone exit is detected.
+  /// Endpoint: POST /alerts
+  Future<void> createSafeZoneExitAlert({
+    required int patientId,
+    required double distanceMeters,
+    required double radiusMeters,
+  }) async {
+    final token = await _getToken();
+    final url = Uri.parse('$_baseUrl/alerts');
+    debugPrint('AlertsService -> POST $url');
+
+    final distanceLabel = distanceMeters.toStringAsFixed(0);
+    final radiusLabel = radiusMeters.toStringAsFixed(0);
+
+    late http.Response response;
+    try {
+      response = await _httpClient
+          .post(
+            url,
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'patient_id': patientId,
+              'type': 'geofence_exit',
+              'message':
+                  'Sortie de zone detectee ($distanceLabel m > $radiusLabel m).',
+            }),
+          )
+          .timeout(_requestTimeout);
+    } on TimeoutException {
+      throw const AlertsException(
+        'La requete a expire. Verifiez votre connexion.',
+      );
+    } on http.ClientException catch (e) {
+      debugPrint('AlertsService ✗ ClientException POST: $e');
+      throw const AlertsException('Erreur reseau. Verifiez votre connexion.');
+    } catch (e) {
+      debugPrint('AlertsService ✗ Unexpected POST: $e');
+      throw const AlertsException('Erreur reseau. Verifiez votre connexion.');
+    }
+
+    debugPrint('AlertsService <- ${response.statusCode} $url');
+
+    dynamic data;
+    if (response.body.isNotEmpty) {
+      try {
+        data = jsonDecode(response.body);
+      } catch (_) {}
+    }
+
+    if (response.statusCode == 401) {
+      throw const AlertsException(
+        'Session expiree. Veuillez vous reconnecter.',
+        statusCode: 401,
+      );
+    }
+    if (response.statusCode == 403) {
+      throw AlertsException(
+        _extractDetail(data) ?? 'Acces refuse.',
+        statusCode: 403,
+      );
+    }
+    if (response.statusCode == 404) {
+      throw const AlertsException('Patient introuvable.', statusCode: 404);
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AlertsException(
+        _extractDetail(data) ??
+            'Impossible de creer l alerte (HTTP ${response.statusCode}).',
+        statusCode: response.statusCode,
+      );
+    }
+  }
+
   /// Marks the alert identified by [alertId] as read.
   /// Endpoint: PATCH /alerts/{alert_id}/read
   Future<void> markAlertRead({required int alertId}) async {
