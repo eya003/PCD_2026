@@ -15,6 +15,7 @@ from .routers import (
     family,
     locations,
     medical_notes,
+    medication_calendar,
     medication_intakes,
     medications,
     patient_allergies,
@@ -108,6 +109,11 @@ app.include_router(
     medication_intakes.router,
     prefix="/medication-intakes",
     tags=["medication-intakes"],
+)
+app.include_router(
+    medication_calendar.router,
+    prefix="/medication-calendar",
+    tags=["medication-calendar"],
 )
 app.include_router(prescriptions.router, tags=["prescriptions"])
 app.include_router(patient_allergies.router, tags=["patient-allergies"])

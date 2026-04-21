@@ -1,9 +1,22 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import models, schemas
+from .services.medications import (
+    build_status_counts as build_planning_status_counts,
+    cancel_future_doses_for_medication,
+    derive_medication_planning_fields,
+    get_next_dose_for_medication,
+    get_patient_day_planning_doses,
+    get_patient_range_planning_doses,
+    get_scheduled_doses_for_medication,
+    get_scheduled_dose,
+    serialize_specific_times,
+    synchronize_future_doses,
+    transition_scheduled_dose_status,
+)
 from .security import hash_password, verify_password
 
 
@@ -28,9 +41,13 @@ PRESCRIPTION_STATUS_COMPLETED = "completed"
 PRESCRIPTION_STATUS_CANCELLED = "cancelled"
 MEDICATION_STATUS_ACTIVE = "active"
 MEDICATION_STATUS_COMPLETED = "completed"
-MEDICATION_STATUS_CANCELLED = "cancelled"
+MEDICATION_STATUS_STOPPED = "stopped"
+# Backward-compatible alias used by legacy endpoints (/medications/{id}/cancel)
+MEDICATION_STATUS_CANCELLED = MEDICATION_STATUS_STOPPED
 INTAKE_STATUS_TAKEN = "taken"
 INTAKE_STATUS_MISSED = "missed"
+INTAKE_STATUS_SKIPPED = "skipped"
+INTAKE_STATUS_RESCHEDULED = "rescheduled"
 
 
 def _normalize_email(email: str) -> str:
@@ -43,6 +60,88 @@ def _normalize_cin(cin: str) -> str:
 
 def _normalize_text(value: str) -> str:
     return value.strip()
+
+
+def _normalize_time_list(value: object) -> list[str] | None:
+    return serialize_specific_times(value)
+
+
+def _prepare_medication_creation_data(
+    db: Session,
+    *,
+    raw_data: dict,
+    patient_id: int,
+    doctor_id: int | None,
+    prescription_id: int | None = None,
+) -> dict:
+    medication_data = dict(raw_data)
+
+    if medication_data.get("period") is None and medication_data.get("duration") is not None:
+        medication_data["period"] = medication_data.get("duration")
+
+    medication_data["patient_id"] = patient_id
+    medication_data["doctor_id"] = doctor_id
+    medication_data["prescription_id"] = (
+        prescription_id if prescription_id is not None else medication_data.get("prescription_id")
+    )
+
+    medication_data["name"] = _normalize_text(medication_data["name"])
+    medication_data["dosage"] = _normalize_text(medication_data["dosage"])
+    medication_data["frequency"] = _normalize_text(medication_data["frequency"])
+    if not medication_data["name"]:
+        raise BusinessRuleError("Medication name cannot be empty")
+    if not medication_data["dosage"]:
+        raise BusinessRuleError("Medication dosage cannot be empty")
+    if not medication_data["frequency"]:
+        raise BusinessRuleError("Medication frequency cannot be empty")
+    medication_data["form"] = (
+        _normalize_text(medication_data["form"])
+        if medication_data.get("form")
+        else None
+    )
+    medication_data["quantity"] = (
+        _normalize_text(medication_data["quantity"])
+        if medication_data.get("quantity")
+        else None
+    )
+    medication_data["period"] = (
+        _normalize_text(medication_data["period"])
+        if medication_data.get("period")
+        else None
+    )
+    medication_data["instructions"] = (
+        _normalize_text(medication_data["instructions"])
+        if medication_data.get("instructions")
+        else None
+    )
+    medication_data["specific_times"] = _normalize_time_list(
+        medication_data.get("specific_times")
+    )
+    medication_data["status"] = normalize_medication_status(
+        medication_data.get("status"),
+        default=MEDICATION_STATUS_ACTIVE,
+    )
+    medication_data["is_as_needed"] = bool(medication_data.get("is_as_needed", False))
+
+    derived_fields = derive_medication_planning_fields(
+        db,
+        patient_id=patient_id,
+        frequency=medication_data.get("frequency"),
+        period=medication_data.get("period"),
+        start_date=medication_data.get("start_date"),
+        end_date=medication_data.get("end_date"),
+        is_as_needed=medication_data.get("is_as_needed", False),
+        intake_count_per_day=medication_data.get("intake_count_per_day"),
+        duration_days=medication_data.get("duration_days"),
+        schedule_mode=medication_data.get("schedule_mode"),
+        specific_times=medication_data.get("specific_times"),
+        day_start_time=medication_data.get("day_start_time"),
+        day_end_time=medication_data.get("day_end_time"),
+        allow_family_adjustment=medication_data.get("allow_family_adjustment"),
+    )
+    medication_data.update(derived_fields)
+    medication_data.pop("duration", None)
+    return medication_data
 
 
 def normalize_appointment_status(
@@ -114,11 +213,11 @@ def normalize_medication_status(
         return MEDICATION_STATUS_ACTIVE
     if status_value in {"completed", "done", "termine"}:
         return MEDICATION_STATUS_COMPLETED
-    if status_value in {"cancelled", "cancel", "annule"}:
-        return MEDICATION_STATUS_CANCELLED
+    if status_value in {"stopped", "stop", "cancelled", "canceled", "cancel", "annule"}:
+        return MEDICATION_STATUS_STOPPED
 
     raise BusinessRuleError(
-        "Invalid medication status. Expected 'active', 'completed' or 'cancelled'"
+        "Invalid medication status. Expected 'active', 'completed' or 'stopped'"
     )
 
 
@@ -128,7 +227,13 @@ def normalize_intake_status(raw_status: str) -> str:
         return INTAKE_STATUS_TAKEN
     if status_value in {"missed", "manque"}:
         return INTAKE_STATUS_MISSED
-    raise BusinessRuleError("Invalid intake status. Expected 'taken' or 'missed'")
+    if status_value in {"skipped", "saute"}:
+        return INTAKE_STATUS_SKIPPED
+    if status_value in {"rescheduled", "replanifie"}:
+        return INTAKE_STATUS_RESCHEDULED
+    raise BusinessRuleError(
+        "Invalid intake status. Expected 'taken', 'missed', 'skipped' or 'rescheduled'"
+    )
 
 
 def _now_for_datetime(value: datetime) -> datetime:
@@ -842,7 +947,7 @@ def create_prescription_with_medications(
     status: str,
     medications_data: list[dict],
 ):
-    """Crée une ordonnance et ses médicaments en une seule transaction atomique."""
+    """Create a prescription and medications in one atomic transaction."""
     prescription = models.Prescription(
         patient_id=patient_id,
         doctor_id=doctor_id,
@@ -851,31 +956,24 @@ def create_prescription_with_medications(
         status=normalize_prescription_status(status, default=PRESCRIPTION_STATUS_ACTIVE),
     )
     db.add(prescription)
-    db.flush()  # obtient prescription.id sans committer
+    db.flush()
 
-    medications = []
-    for med in medications_data:
-        db_med = models.Medication(
-            prescription_id=prescription.id,
-            patient_id=patient_id,
-            doctor_id=doctor_id,
-            name=_normalize_text(med["name"]),
-            dosage=_normalize_text(med["dosage"]),
-            form=_normalize_text(med["form"]) if med.get("form") else None,
-            quantity=_normalize_text(med["quantity"]) if med.get("quantity") else None,
-            frequency=_normalize_text(med["frequency"]),
-            period=_normalize_text(med["period"]) if med.get("period") else None,
-            start_date=med["start_date"],
-            end_date=med.get("end_date"),
-            instructions=_normalize_text(med["instructions"]) if med.get("instructions") else None,
-            status=normalize_medication_status(
-                med.get("status"), default=MEDICATION_STATUS_ACTIVE
-            ),
-        )
-        db.add(db_med)
-        medications.append(db_med)
-
+    medications: list[models.Medication] = []
     try:
+        for med in medications_data:
+            medication_data = _prepare_medication_creation_data(
+                db,
+                raw_data=med,
+                patient_id=patient_id,
+                doctor_id=doctor_id,
+                prescription_id=prescription.id,
+            )
+            db_med = models.Medication(**medication_data)
+            db.add(db_med)
+            db.flush()
+            synchronize_future_doses(db, db_med)
+            medications.append(db_med)
+
         db.commit()
         db.refresh(prescription)
         for db_med in medications:
@@ -894,39 +992,25 @@ def get_medications(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.Medication).offset(skip).limit(limit).all()
 
 
-def create_medication(db: Session, payload: schemas.MedicationCreate):
-    medication_data = payload.model_dump()
-    medication_data["name"] = _normalize_text(medication_data["name"])
-    medication_data["dosage"] = _normalize_text(medication_data["dosage"])
-    medication_data["frequency"] = _normalize_text(medication_data["frequency"])
-    medication_data["form"] = (
-        _normalize_text(medication_data["form"])
-        if medication_data.get("form")
-        else None
-    )
-    medication_data["quantity"] = (
-        _normalize_text(medication_data["quantity"])
-        if medication_data.get("quantity")
-        else None
-    )
-    medication_data["period"] = (
-        _normalize_text(medication_data["period"])
-        if medication_data.get("period")
-        else None
-    )
-    medication_data["instructions"] = (
-        _normalize_text(medication_data["instructions"])
-        if medication_data.get("instructions")
-        else None
-    )
-    medication_data["status"] = normalize_medication_status(
-        medication_data.get("status"),
-        default=MEDICATION_STATUS_ACTIVE,
+def create_medication(
+    db: Session,
+    payload: schemas.MedicationCreate | schemas.MedicationDoctorCreate,
+    *,
+    doctor_id: int | None = None,
+):
+    medication_data = _prepare_medication_creation_data(
+        db,
+        raw_data=payload.model_dump(exclude_unset=True),
+        patient_id=payload.patient_id,
+        doctor_id=doctor_id if doctor_id is not None else getattr(payload, "doctor_id", None),
+        prescription_id=payload.prescription_id,
     )
 
     medication = models.Medication(**medication_data)
     db.add(medication)
     try:
+        db.flush()
+        synchronize_future_doses(db, medication)
         db.commit()
         db.refresh(medication)
     except IntegrityError:
@@ -940,15 +1024,62 @@ def update_medication(
     db_medication: models.Medication,
     payload: schemas.MedicationUpdate,
 ):
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        if isinstance(value, str):
-            value = _normalize_text(value)
-        if field == "status":
+    updates = payload.model_dump(exclude_unset=True)
+    schedule_sensitive_fields = {
+        "patient_id",
+        "prescription_id",
+        "status",
+        "start_date",
+        "end_date",
+        "duration_days",
+        "intake_count_per_day",
+        "schedule_mode",
+        "specific_times",
+        "day_start_time",
+        "day_end_time",
+        "is_as_needed",
+    }
+    schedule_needs_sync = any(field in updates for field in schedule_sensitive_fields)
+
+    for field, value in updates.items():
+        if field in {
+            "name",
+            "dosage",
+            "frequency",
+            "form",
+            "quantity",
+            "period",
+            "instructions",
+        }:
+            value = _normalize_text(value) if value else None
+        elif field == "status":
             value = normalize_medication_status(
                 value,
                 default=db_medication.status or MEDICATION_STATUS_ACTIVE,
             )
+        elif field == "specific_times":
+            value = _normalize_time_list(value)
         setattr(db_medication, field, value)
+
+    if schedule_needs_sync:
+        normalized_status = normalize_medication_status(
+            db_medication.status,
+            default=MEDICATION_STATUS_ACTIVE,
+        )
+        if normalized_status in {MEDICATION_STATUS_COMPLETED, MEDICATION_STATUS_STOPPED}:
+            cancel_future_doses_for_medication(
+                db,
+                db_medication,
+                reason="Cancelled automatically after medication status update",
+            )
+        elif db_medication.is_as_needed:
+            cancel_future_doses_for_medication(
+                db,
+                db_medication,
+                reason="Cancelled automatically because medication is as-needed",
+            )
+        else:
+            synchronize_future_doses(db, db_medication)
     try:
         db.commit()
         db.refresh(db_medication)
@@ -964,7 +1095,22 @@ def set_medication_status(
     *,
     status_value: str,
 ):
-    db_medication.status = normalize_medication_status(status_value)
+    normalized_status = normalize_medication_status(status_value)
+    db_medication.status = normalized_status
+    if normalized_status in {MEDICATION_STATUS_COMPLETED, MEDICATION_STATUS_STOPPED}:
+        cancel_future_doses_for_medication(
+            db,
+            db_medication,
+            reason=f"Cancelled automatically after medication set to {normalized_status}",
+        )
+    elif db_medication.is_as_needed:
+        cancel_future_doses_for_medication(
+            db,
+            db_medication,
+            reason="Cancelled automatically because medication is as-needed",
+        )
+    else:
+        synchronize_future_doses(db, db_medication)
     try:
         db.commit()
         db.refresh(db_medication)
@@ -1052,6 +1198,245 @@ def get_medications_by_family_user(
     )
 
 
+def get_scheduled_medication_dose(db: Session, dose_id: int):
+    return get_scheduled_dose(db, dose_id=dose_id)
+
+
+def transition_planned_dose_status(
+    db: Session,
+    *,
+    db_dose: models.ScheduledMedicationDose,
+    target_status: str,
+    acted_by: int | None = None,
+    acted_at: datetime | None = None,
+    validation_method: str = "manual",
+    skipped_reason: str | None = None,
+    notes: str | None = None,
+    comment: str | None = None,
+    rescheduled_for: datetime | None = None,
+    create_intake_log: bool = True,
+):
+    try:
+        dose, intake = transition_scheduled_dose_status(
+            db,
+            dose=db_dose,
+            target_status=(target_status or "").strip().lower(),
+            acted_by=acted_by,
+            acted_at=acted_at,
+            validation_method=validation_method,
+            skipped_reason=skipped_reason,
+            notes=notes,
+            comment=comment,
+            rescheduled_for=rescheduled_for,
+            create_intake_log=create_intake_log,
+        )
+    except ValueError as exc:
+        raise BusinessRuleError(str(exc)) from None
+    try:
+        db.commit()
+        db.refresh(dose)
+        if intake is not None:
+            db.refresh(intake)
+    except IntegrityError:
+        db.rollback()
+        raise
+    return dose, intake
+
+
+def get_day_planning_for_patient(
+    db: Session,
+    *,
+    patient_id: int,
+    planning_date: date,
+):
+    doses = get_patient_day_planning_doses(
+        db,
+        patient_id=patient_id,
+        planning_date=planning_date,
+    )
+    return {
+        "patient_id": patient_id,
+        "date": planning_date,
+        "doses": doses,
+        "counts": build_planning_status_counts(doses),
+    }
+
+
+def get_range_planning_for_patient(
+    db: Session,
+    *,
+    patient_id: int,
+    start_date: date,
+    end_date: date,
+):
+    if end_date < start_date:
+        raise BusinessRuleError("end_date must be on or after start_date")
+
+    doses = get_patient_range_planning_doses(
+        db,
+        patient_id=patient_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    doses_by_day: dict[date, list[models.ScheduledMedicationDose]] = {}
+    for dose in doses:
+        doses_by_day.setdefault(dose.scheduled_date, []).append(dose)
+
+    days = []
+    cursor = start_date
+    while cursor <= end_date:
+        day_doses = doses_by_day.get(cursor, [])
+        days.append(
+            {
+                "date": cursor,
+                "doses": day_doses,
+                "counts": build_planning_status_counts(day_doses),
+            }
+        )
+        cursor += timedelta(days=1)
+
+    return {
+        "patient_id": patient_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        "days": days,
+        "counts": build_planning_status_counts(doses),
+    }
+
+
+def get_next_planned_dose_for_medication(
+    db: Session,
+    *,
+    medication_id: int,
+    from_datetime: datetime | None = None,
+):
+    return get_next_dose_for_medication(
+        db,
+        medication_id=medication_id,
+        from_datetime=from_datetime,
+    )
+
+
+def get_planned_doses_for_medication(
+    db: Session,
+    *,
+    medication_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    if start_date is not None and end_date is not None and end_date < start_date:
+        raise BusinessRuleError("end_date must be on or after start_date")
+
+    return get_scheduled_doses_for_medication(
+        db,
+        medication_id=medication_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+def get_medication_schedule_template(db: Session, patient_id: int):
+    return (
+        db.query(models.MedicationScheduleTemplate)
+        .filter(models.MedicationScheduleTemplate.patient_id == patient_id)
+        .order_by(
+            models.MedicationScheduleTemplate.is_active.desc(),
+            models.MedicationScheduleTemplate.id.desc(),
+        )
+        .first()
+    )
+
+
+def ensure_medication_schedule_template(
+    db: Session,
+    *,
+    patient_id: int,
+    created_by: int | None = None,
+):
+    template = get_medication_schedule_template(db, patient_id=patient_id)
+    if template is not None:
+        return template
+
+    template = models.MedicationScheduleTemplate(
+        patient_id=patient_id,
+        created_by=created_by,
+        morning_time=time(8, 0),
+        noon_time=time(13, 0),
+        evening_time=time(20, 0),
+        day_start_time=time(8, 0),
+        day_end_time=time(23, 0),
+        reminder_offset_minutes=10,
+        allow_family_adjustment=True,
+        is_active=True,
+    )
+    db.add(template)
+    try:
+        db.commit()
+        db.refresh(template)
+    except IntegrityError:
+        db.rollback()
+        raise
+    return template
+
+
+def upsert_medication_schedule_template(
+    db: Session,
+    *,
+    patient_id: int,
+    payload: schemas.MedicationScheduleTemplateUpdate,
+    updated_by: int | None,
+):
+    template = get_medication_schedule_template(db, patient_id=patient_id)
+    if template is None:
+        template = models.MedicationScheduleTemplate(
+            patient_id=patient_id,
+            created_by=updated_by,
+            morning_time=time(8, 0),
+            noon_time=time(13, 0),
+            evening_time=time(20, 0),
+            day_start_time=time(8, 0),
+            day_end_time=time(23, 0),
+            reminder_offset_minutes=10,
+            allow_family_adjustment=True,
+            is_active=True,
+        )
+        db.add(template)
+        db.flush()
+
+    update_values = payload.model_dump(exclude_unset=True)
+    for field, value in update_values.items():
+        setattr(template, field, value)
+
+    required_fields = {
+        "morning_time": template.morning_time,
+        "noon_time": template.noon_time,
+        "evening_time": template.evening_time,
+        "day_start_time": template.day_start_time,
+        "day_end_time": template.day_end_time,
+        "reminder_offset_minutes": template.reminder_offset_minutes,
+        "allow_family_adjustment": template.allow_family_adjustment,
+        "is_active": template.is_active,
+    }
+    for field, value in required_fields.items():
+        if value is None:
+            raise BusinessRuleError(f"{field} cannot be null")
+
+    if template.day_end_time <= template.day_start_time:
+        raise BusinessRuleError("day_end_time must be strictly after day_start_time")
+
+    if template.created_by is None and updated_by is not None:
+        template.created_by = updated_by
+    template.updated_at = datetime.utcnow()
+    try:
+        db.commit()
+        db.refresh(template)
+    except IntegrityError:
+        db.rollback()
+        raise
+    return template
+
+
 def get_medication_intake(db: Session, intake_id: int):
     return (
         db.query(models.MedicationIntake)
@@ -1125,6 +1510,46 @@ def create_medication_intake(
         if intake_data.get("comment")
         else None
     )
+
+    scheduled_dose_id = intake_data.get("scheduled_dose_id")
+    if scheduled_dose_id is not None:
+        scheduled_dose = get_scheduled_dose(db, dose_id=scheduled_dose_id)
+        if scheduled_dose is None:
+            raise BusinessRuleError("Scheduled dose not found")
+        if scheduled_dose.medication_id != intake_data["medication_id"]:
+            raise BusinessRuleError(
+                "scheduled_dose_id does not belong to the provided medication_id"
+            )
+        if intake_data.get("scheduled_for") is None:
+            intake_data["scheduled_for"] = scheduled_dose.scheduled_for
+
+        if intake_data["status"] == INTAKE_STATUS_RESCHEDULED:
+            raise BusinessRuleError(
+                "Legacy intake endpoint cannot reschedule a planned dose without a new datetime"
+            )
+
+        skipped_reason = None
+        if intake_data["status"] == INTAKE_STATUS_SKIPPED:
+            skipped_reason = (
+                intake_data.get("comment")
+                or "Skipped via legacy medication intake endpoint"
+            )
+
+        _, transitioned_intake = transition_planned_dose_status(
+            db,
+            db_dose=scheduled_dose,
+            target_status=intake_data["status"],
+            acted_by=validated_by,
+            acted_at=intake_data.get("taken_at"),
+            validation_method="manual",
+            skipped_reason=skipped_reason,
+            notes="Transitioned via legacy medication intake endpoint",
+            comment=intake_data.get("comment"),
+            create_intake_log=True,
+        )
+        if transitioned_intake is not None:
+            return transitioned_intake
+
     intake = models.MedicationIntake(**intake_data)
     db.add(intake)
     try:

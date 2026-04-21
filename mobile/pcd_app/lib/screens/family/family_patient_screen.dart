@@ -2,17 +2,20 @@ import 'package:flutter/material.dart';
 
 import '../../models/appointment_item.dart';
 import '../../models/family_permissions.dart';
+import '../../models/medication_calendar.dart';
 import '../../models/patient_alert.dart';
 import '../../models/patient_location.dart';
 import '../../models/patient_summary.dart';
 import '../../services/alerts_service.dart';
 import '../../services/appointments_service.dart';
 import '../../services/location_service.dart';
+import '../../services/medication_calendar_service.dart';
 import '../../services/treatments_service.dart';
 import '../../theme/app_spacing.dart';
 import 'family_alerts_screen.dart';
 import 'family_appointments_screen.dart';
 import 'family_location_screen.dart';
+import 'family_medication_calendar_screen.dart';
 import 'family_members_screen.dart';
 import 'family_patient_record_screen.dart';
 import 'family_treatments_screen.dart';
@@ -47,6 +50,7 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
   late final AppointmentsService _appointmentsService;
   late final AlertsService _alertsService;
   late final LocationService _locationService;
+  late final MedicationCalendarService _medicationCalendarService;
 
   bool _isLoading = true;
   String? _loadError; // set only on auth failure (401)
@@ -55,7 +59,9 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
   List<AppointmentItem> _appointments = const [];
   List<PatientAlert> _alerts = const [];
   PatientLocation? _lastLocation;
-  FamilyPermissions get _permissions => FamilyPermissions(isAdmin: widget.isAdmin);
+  List<ScheduledMedicationDose> _upcomingTodayDoses = const [];
+  FamilyPermissions get _permissions =>
+      FamilyPermissions(isAdmin: widget.isAdmin);
 
   int get _activeMedCount => _treatmentData?.activeMedications.length ?? 0;
 
@@ -64,9 +70,11 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
   List<AppointmentItem> get _upcomingAppointments {
     final now = DateTime.now();
     return _appointments
-        .where((a) =>
-            a.effectiveStatus == AppointmentItem.statusScheduled &&
-            a.dateTime.isAfter(now))
+        .where(
+          (a) =>
+              a.effectiveStatus == AppointmentItem.statusScheduled &&
+              a.dateTime.isAfter(now),
+        )
         .toList()
       ..sort((a, b) => a.dateTime.compareTo(b.dateTime));
   }
@@ -94,6 +102,7 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
     _appointmentsService = AppointmentsService();
     _alertsService = AlertsService();
     _locationService = LocationService();
+    _medicationCalendarService = MedicationCalendarService();
     _load();
   }
 
@@ -108,6 +117,7 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
     List<AppointmentItem> appointments = [];
     List<PatientAlert> alerts = [];
     PatientLocation? lastLocation;
+    List<ScheduledMedicationDose> upcomingTodayDoses = [];
     String? authError;
 
     // All services are called concurrently.
@@ -141,6 +151,12 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
             lastLocation = d;
           })
           .catchError((_) {}),
+      _medicationCalendarService
+          .fetchTodayPlanning(patientId: id, planningDate: DateTime.now())
+          .then((planning) {
+            upcomingTodayDoses = _extractUpcomingTodayDoses(planning);
+          })
+          .catchError((_) {}),
     ]);
 
     if (!mounted) return;
@@ -149,41 +165,93 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
       _appointments = appointments;
       _alerts = alerts;
       _lastLocation = lastLocation;
+      _upcomingTodayDoses = upcomingTodayDoses;
       _loadError = authError;
       _isLoading = false;
     });
   }
 
-  void _push(Widget screen) =>
-      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
+  List<ScheduledMedicationDose> _extractUpcomingTodayDoses(
+    MedicationDayPlanning planning,
+  ) {
+    final now = DateTime.now();
+    final result =
+        planning.doses
+            .where(
+              (dose) =>
+                  dose.normalizedStatus ==
+                      ScheduledMedicationDose.statusPending &&
+                  !dose.effectiveScheduledFor.isBefore(now),
+            )
+            .toList()
+          ..sort(
+            (a, b) =>
+                a.effectiveScheduledFor.compareTo(b.effectiveScheduledFor),
+          );
+
+    if (result.isNotEmpty) {
+      return result;
+    }
+
+    final fallback =
+        planning.doses
+            .where(
+              (dose) =>
+                  dose.normalizedStatus ==
+                  ScheduledMedicationDose.statusPending,
+            )
+            .toList()
+          ..sort(
+            (a, b) =>
+                a.effectiveScheduledFor.compareTo(b.effectiveScheduledFor),
+          );
+    return fallback;
+  }
+
+  void _push(Widget screen) => Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => screen));
 
   void _openTreatments() => _push(
-        FamilyTreatmentsScreen(
-          patient: widget.patient,
+    FamilyTreatmentsScreen(
+      patient: widget.patient,
+      isAdmin: _permissions.isAdmin,
+    ),
+  );
+
+  Future<void> _openMedicationCalendar() async {
+    final refreshNeeded = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => FamilyMedicationCalendarScreen(
+          patientId: widget.patient.id,
+          patientName: widget.patient.fullName,
           isAdmin: _permissions.isAdmin,
         ),
-      );
+      ),
+    );
+
+    if (refreshNeeded == true && mounted) {
+      await _load();
+    }
+  }
 
   void _openAppointments() => _push(
-        FamilyAppointmentsScreen(
-          patient: widget.patient,
-          isAdmin: _permissions.isAdmin,
-        ),
-      );
+    FamilyAppointmentsScreen(
+      patient: widget.patient,
+      isAdmin: _permissions.isAdmin,
+    ),
+  );
 
   void _openAlerts() => _push(
-        FamilyAlertsScreen(
-          patient: widget.patient,
-          isAdmin: _permissions.isAdmin,
-        ),
-      );
+    FamilyAlertsScreen(patient: widget.patient, isAdmin: _permissions.isAdmin),
+  );
 
   void _openLocation() => _push(
-        FamilyLocationScreen(
-          patient: widget.patient,
-          isAdmin: _permissions.isAdmin,
-        ),
-      );
+    FamilyLocationScreen(
+      patient: widget.patient,
+      isAdmin: _permissions.isAdmin,
+    ),
+  );
 
   Future<void> _openFamilyMembers() async {
     await Navigator.of(context).push(
@@ -201,11 +269,11 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
   }
 
   void _openPatientRecord() => _push(
-        FamilyPatientRecordScreen(
-          patient: widget.patient,
-          isAdmin: _permissions.isAdmin,
-        ),
-      );
+    FamilyPatientRecordScreen(
+      patient: widget.patient,
+      isAdmin: _permissions.isAdmin,
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -247,6 +315,12 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
                 hasLocation: _lastLocation != null,
               ),
               const SizedBox(height: AppSpacing.md),
+              _TodayMedicationWidget(
+                doses: _upcomingTodayDoses,
+                isAdmin: _permissions.isAdmin,
+                onOpenCalendar: _openMedicationCalendar,
+              ),
+              const SizedBox(height: AppSpacing.md),
               _QuickAccessGrid(
                 activeMedCount: _activeMedCount,
                 upcomingCount: _upcomingAppointments.length,
@@ -259,6 +333,7 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
                 onLocation: _openLocation,
                 onFamilyMembers: _openFamilyMembers,
                 onPatientRecord: _openPatientRecord,
+                onMedicationCalendar: _openMedicationCalendar,
               ),
               const SizedBox(height: AppSpacing.md),
               _TodaySection(
@@ -268,7 +343,7 @@ class _FamilyPatientScreenState extends State<FamilyPatientScreen> {
                 activeMedCount: _activeMedCount,
                 onOpenAppointments: _openAppointments,
                 onOpenAlerts: _openAlerts,
-                onOpenTreatments: _openTreatments,
+                onOpenMedicationCalendar: _openMedicationCalendar,
               ),
               const SizedBox(height: AppSpacing.md),
             ],
@@ -416,7 +491,7 @@ class _DailyOverviewCard extends StatelessWidget {
         : 'Resume du jour: $tasks action${tasks > 1 ? 's' : ''} a suivre';
 
     return Card(
-      color: colorScheme.primaryContainer.withOpacity(0.35),
+      color: colorScheme.primaryContainer.withValues(alpha: 0.35),
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
@@ -435,10 +510,7 @@ class _DailyOverviewCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.xs),
-            Text(
-              headline,
-              style: theme.textTheme.bodyMedium,
-            ),
+            Text(headline, style: theme.textTheme.bodyMedium),
             const SizedBox(height: AppSpacing.sm),
             Text(
               nextAppointment == null
@@ -513,8 +585,9 @@ class _SummaryRow extends StatelessWidget {
               : Icons.location_off_outlined,
           value: hasLocation ? 'OK' : '--',
           label: 'Localisation',
-          color:
-              hasLocation ? Colors.blue.shade700 : colorScheme.onSurfaceVariant,
+          color: hasLocation
+              ? Colors.blue.shade700
+              : colorScheme.onSurfaceVariant,
         ),
       ],
     );
@@ -543,7 +616,9 @@ class _StatTile extends StatelessWidget {
 
     return Expanded(
       child: Card(
-        color: highlighted ? colorScheme.errorContainer.withOpacity(0.35) : null,
+        color: highlighted
+            ? colorScheme.errorContainer.withValues(alpha: 0.35)
+            : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(
             vertical: AppSpacing.sm,
@@ -580,6 +655,139 @@ class _StatTile extends StatelessWidget {
   }
 }
 
+class _TodayMedicationWidget extends StatelessWidget {
+  const _TodayMedicationWidget({
+    required this.doses,
+    required this.isAdmin,
+    required this.onOpenCalendar,
+  });
+
+  final List<ScheduledMedicationDose> doses;
+  final bool isAdmin;
+  final VoidCallback onOpenCalendar;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final visible = doses.take(4).toList();
+
+    return Card(
+      color: colorScheme.primaryContainer.withValues(alpha: 0.28),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.today_outlined, color: colorScheme.primary),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    'Medicaments - Aujourd hui',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                FilledButton.tonal(
+                  onPressed: onOpenCalendar,
+                  child: const Text('Voir tout'),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (visible.isEmpty)
+              Text(
+                'Aucune prise restante pour le moment.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              )
+            else
+              Column(
+                children: visible
+                    .map(
+                      (dose) => Padding(
+                        padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                        child: _TodayDosePreviewRow(dose: dose),
+                      ),
+                    )
+                    .toList(),
+              ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              isAdmin
+                  ? 'Admin: actions disponibles dans le calendrier.'
+                  : 'Spectateur: consultation en lecture seule.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TodayDosePreviewRow extends StatelessWidget {
+  const _TodayDosePreviewRow({required this.dose});
+
+  final ScheduledMedicationDose dose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final medName = dose.medication?.name ?? 'Medicament #${dose.medicationId}';
+    final hour = dose.effectiveScheduledFor.hour.toString().padLeft(2, '0');
+    final minute = dose.effectiveScheduledFor.minute.toString().padLeft(2, '0');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Text(
+            '$hour:$minute',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              medName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Text(
+            dose.statusLabelFr,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TodaySection extends StatelessWidget {
   const _TodaySection({
     required this.isAdmin,
@@ -588,7 +796,7 @@ class _TodaySection extends StatelessWidget {
     required this.activeMedCount,
     required this.onOpenAppointments,
     required this.onOpenAlerts,
-    required this.onOpenTreatments,
+    required this.onOpenMedicationCalendar,
   });
 
   final bool isAdmin;
@@ -597,7 +805,7 @@ class _TodaySection extends StatelessWidget {
   final int activeMedCount;
   final VoidCallback onOpenAppointments;
   final VoidCallback onOpenAlerts;
-  final VoidCallback onOpenTreatments;
+  final VoidCallback onOpenMedicationCalendar;
 
   @override
   Widget build(BuildContext context) {
@@ -611,10 +819,7 @@ class _TodaySection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(
-            bottom: AppSpacing.xs,
-            left: 2,
-          ),
+          padding: const EdgeInsets.only(bottom: AppSpacing.xs, left: 2),
           child: Text(
             'A faire aujourd hui',
             style: theme.textTheme.titleSmall?.copyWith(
@@ -657,7 +862,8 @@ class _TodaySection extends StatelessWidget {
                 _TodayItem(
                   icon: Icons.notifications_active_outlined,
                   iconColor: colorScheme.error,
-                  title: '$unreadAlertCount alerte${unreadAlertCount > 1 ? 's' : ''} '
+                  title:
+                      '$unreadAlertCount alerte${unreadAlertCount > 1 ? 's' : ''} '
                       'non lue${unreadAlertCount > 1 ? 's' : ''}',
                   subtitle: 'Appuyez pour consulter',
                   onTap: onOpenAlerts,
@@ -672,8 +878,10 @@ class _TodaySection extends StatelessWidget {
                   subtitle:
                       'Le ${nextAppointment!.dateLabel} a ${nextAppointment!.timeLabel}',
                   onTap: onOpenAppointments,
-                  trailing:
-                      _ActionChip(label: 'Ouvrir', onTap: onOpenAppointments),
+                  trailing: _ActionChip(
+                    label: 'Ouvrir',
+                    onTap: onOpenAppointments,
+                  ),
                 ),
               ],
               if (activeMedCount > 0) ...[
@@ -684,9 +892,11 @@ class _TodaySection extends StatelessWidget {
                   title:
                       '$activeMedCount traitement${activeMedCount > 1 ? 's' : ''} actif${activeMedCount > 1 ? 's' : ''}',
                   subtitle: 'Suivi des prises en cours',
-                  onTap: onOpenTreatments,
-                  trailing:
-                      _ActionChip(label: 'Ouvrir', onTap: onOpenTreatments),
+                  onTap: onOpenMedicationCalendar,
+                  trailing: _ActionChip(
+                    label: 'Ouvrir',
+                    onTap: onOpenMedicationCalendar,
+                  ),
                 ),
               ],
             ],
@@ -705,7 +915,11 @@ class _AllGoodCard extends StatelessWidget {
         padding: const EdgeInsets.all(AppSpacing.md),
         child: Row(
           children: [
-            Icon(Icons.check_circle_outline, color: Colors.green.shade700, size: 22),
+            Icon(
+              Icons.check_circle_outline,
+              color: Colors.green.shade700,
+              size: 22,
+            ),
             const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Text(
@@ -820,6 +1034,7 @@ class _QuickAccessGrid extends StatelessWidget {
     required this.onLocation,
     required this.onFamilyMembers,
     required this.onPatientRecord,
+    required this.onMedicationCalendar,
   });
 
   final int activeMedCount;
@@ -833,6 +1048,7 @@ class _QuickAccessGrid extends StatelessWidget {
   final VoidCallback onLocation;
   final VoidCallback onFamilyMembers;
   final VoidCallback onPatientRecord;
+  final VoidCallback onMedicationCalendar;
 
   @override
   Widget build(BuildContext context) {
@@ -868,8 +1084,9 @@ class _QuickAccessGrid extends StatelessWidget {
             _AccessCard(
               icon: Icons.calendar_month_outlined,
               label: 'Rendez-vous',
-              subtitle:
-                  upcomingCount > 0 ? '$upcomingCount a venir' : 'Aucun planifie',
+              subtitle: upcomingCount > 0
+                  ? '$upcomingCount a venir'
+                  : 'Aucun planifie',
               iconColor: colorScheme.secondary,
               iconBg: colorScheme.secondaryContainer,
               onTap: onAppointments,
@@ -885,8 +1102,9 @@ class _QuickAccessGrid extends StatelessWidget {
               subtitle: unreadAlertCount > 0
                   ? '$unreadAlertCount non lue${unreadAlertCount > 1 ? 's' : ''}'
                   : 'Tout lu',
-              iconColor:
-                  unreadAlertCount > 0 ? colorScheme.error : colorScheme.tertiary,
+              iconColor: unreadAlertCount > 0
+                  ? colorScheme.error
+                  : colorScheme.tertiary,
               iconBg: unreadAlertCount > 0
                   ? colorScheme.errorContainer
                   : colorScheme.tertiaryContainer,
@@ -921,6 +1139,13 @@ class _QuickAccessGrid extends StatelessWidget {
           label: 'Historique / fiche patient',
           subtitle: 'Consulter le dossier et les derniers evenements',
           onTap: onPatientRecord,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _AccessWideCard(
+          icon: Icons.today_outlined,
+          label: 'Calendrier medicaments',
+          subtitle: 'Voir les doses du jour et agir sur les prises',
+          onTap: onMedicationCalendar,
         ),
       ],
     );

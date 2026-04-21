@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../../models/family_permissions.dart';
 import '../../models/medication.dart';
+import '../../models/medication_calendar.dart';
 import '../../models/medication_intake.dart';
+import '../../services/medication_calendar_service.dart';
 import '../../services/treatments_service.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/section_card.dart';
+import 'family_medication_calendar_screen.dart';
 
 /// Medication detail screen for family users.
-/// Shows medication info + intake history.
-/// Admins can validate a new intake (taken or missed).
+/// Shows medication info, schedule follow-up and intake history.
 class FamilyMedicationDetailScreen extends StatefulWidget {
   const FamilyMedicationDetailScreen({
     super.key,
@@ -32,19 +34,70 @@ class FamilyMedicationDetailScreen extends StatefulWidget {
 class _FamilyMedicationDetailScreenState
     extends State<FamilyMedicationDetailScreen> {
   late final TreatmentsService _service;
-  FamilyPermissions get _permissions => FamilyPermissions(isAdmin: widget.isAdmin);
+  late final MedicationCalendarService _calendarService;
+  FamilyPermissions get _permissions =>
+      FamilyPermissions(isAdmin: widget.isAdmin);
 
-  // Local copy so we can append new entries without reloading the parent.
   late List<MedicationIntake> _intakes;
+  ScheduledMedicationDose? _nextDose;
+
   bool _isSubmitting = false;
+  bool _isLoadingNextDose = true;
   bool _wasModified = false;
 
   @override
   void initState() {
     super.initState();
     _service = TreatmentsService();
+    _calendarService = MedicationCalendarService();
     _intakes = List.of(widget.intakes)
       ..sort((a, b) => b.takenAt.compareTo(a.takenAt));
+    _loadNextScheduledDose();
+  }
+
+  Future<void> _loadNextScheduledDose() async {
+    setState(() {
+      _isLoadingNextDose = true;
+    });
+
+    try {
+      final now = DateTime.now();
+      final doses = await _calendarService.fetchMedicationScheduledDoses(
+        medicationId: widget.medication.id,
+        startDate: now,
+        endDate: now.add(const Duration(days: 30)),
+      );
+
+      final sorted = List<ScheduledMedicationDose>.from(doses)
+        ..sort(
+          (a, b) => a.effectiveScheduledFor.compareTo(b.effectiveScheduledFor),
+        );
+
+      ScheduledMedicationDose? nextDose;
+      for (final dose in sorted) {
+        if (dose.normalizedStatus == ScheduledMedicationDose.statusPending &&
+            !dose.effectiveScheduledFor.isBefore(now)) {
+          nextDose = dose;
+          break;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _nextDose = nextDose;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _nextDose = null;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingNextDose = false;
+        });
+      }
+    }
   }
 
   Future<void> _validateIntake(String status) async {
@@ -72,7 +125,29 @@ class _FamilyMedicationDetailScreenState
       if (!mounted) return;
       _showSnackBar('Impossible d enregistrer la prise.');
     } finally {
-      if (mounted) setState(() => _isSubmitting = false);
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  Future<void> _openMedicationCalendar() async {
+    final refreshNeeded = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => FamilyMedicationCalendarScreen(
+          patientId: widget.patientId,
+          patientName: '',
+          isAdmin: _permissions.isAdmin,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+    if (refreshNeeded == true) {
+      setState(() {
+        _wasModified = true;
+      });
+      await _loadNextScheduledDose();
     }
   }
 
@@ -81,9 +156,7 @@ class _FamilyMedicationDetailScreenState
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Valider une prise'),
-        content: Text(
-          'Enregistrer une prise pour ${widget.medication.name} ?',
-        ),
+        content: Text('Enregistrer une prise pour ${widget.medication.name} ?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
@@ -102,8 +175,10 @@ class _FamilyMedicationDetailScreenState
         ],
       ),
     );
+
     if (action != null && mounted) {
       await _validateIntake(action);
+      await _loadNextScheduledDose();
     }
   }
 
@@ -119,28 +194,47 @@ class _FamilyMedicationDetailScreenState
 
     return PopScope(
       canPop: true,
-      onPopInvoked: (_) {
-        // Signal parent to reload if we added new intakes.
-      },
       child: Scaffold(
         appBar: AppBar(
           title: Text(med.name),
           leading: BackButton(
             onPressed: () => Navigator.of(context).pop(_wasModified),
           ),
+          actions: [
+            IconButton(
+              tooltip: 'Calendrier',
+              onPressed: _openMedicationCalendar,
+              icon: const Icon(Icons.calendar_month_outlined),
+            ),
+          ],
         ),
         body: SafeArea(
           child: ListView(
             padding: const EdgeInsets.all(AppSpacing.md),
             children: [
-              // ── Medication info ───────────────────────────────────────────
               SectionCard(
-                title: 'Informations',
+                title: 'Informations traitement',
                 child: _MedicationInfo(medication: med),
               ),
               const SizedBox(height: AppSpacing.md),
-
-              // ── Admin action ──────────────────────────────────────────────
+              SectionCard(
+                title: 'Suivi calendrier',
+                action: FilledButton.icon(
+                  onPressed: _openMedicationCalendar,
+                  icon: const Icon(Icons.today_outlined),
+                  label: const Text('Ouvrir'),
+                ),
+                child: _ScheduleFollowCard(
+                  nextDose: _nextDose,
+                  isLoading: _isLoadingNextDose,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              SectionCard(
+                title: 'Instructions',
+                child: _InstructionsCardContent(instructions: med.instructions),
+              ),
+              const SizedBox(height: AppSpacing.md),
               if (_permissions.canValidateMedication && med.isActive) ...[
                 _AdminActionCard(
                   isSubmitting: _isSubmitting,
@@ -148,8 +242,6 @@ class _FamilyMedicationDetailScreenState
                 ),
                 const SizedBox(height: AppSpacing.md),
               ],
-
-              // ── Intake history ────────────────────────────────────────────
               SectionCard(
                 title: 'Historique des prises',
                 action: _intakes.isEmpty
@@ -163,7 +255,7 @@ class _FamilyMedicationDetailScreenState
                     ? const _EmptyIntakes()
                     : Column(
                         children: _intakes
-                            .map((i) => _IntakeRow(intake: i))
+                            .map((intake) => _IntakeRow(intake: intake))
                             .toList(),
                       ),
               ),
@@ -175,8 +267,6 @@ class _FamilyMedicationDetailScreenState
   }
 }
 
-// ── Medication info ───────────────────────────────────────────────────────────
-
 class _MedicationInfo extends StatelessWidget {
   const _MedicationInfo({required this.medication});
 
@@ -186,6 +276,10 @@ class _MedicationInfo extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+
+    final statusColor = medication.isActive
+        ? Colors.green.shade700
+        : colorScheme.onSurfaceVariant;
 
     Widget row(String label, String? value) {
       if ((value ?? '').trim().isEmpty) return const SizedBox.shrink();
@@ -204,18 +298,11 @@ class _MedicationInfo extends StatelessWidget {
                 ),
               ),
             ),
-            Expanded(
-              child: Text(value!, style: theme.textTheme.bodyMedium),
-            ),
+            Expanded(child: Text(value!, style: theme.textTheme.bodyMedium)),
           ],
         ),
       );
     }
-
-    // Status badge color
-    final statusColor = medication.isActive
-        ? Colors.green.shade700
-        : colorScheme.onSurfaceVariant;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -241,14 +328,19 @@ class _MedicationInfo extends StatelessWidget {
           ],
         ),
         const SizedBox(height: AppSpacing.sm),
+        row('Nom', medication.name),
         row('Dosage', medication.dosage),
+        row('Frequence', medication.frequency),
         row('Forme', medication.form),
         row('Quantite', medication.quantity),
-        row('Frequence', medication.frequency),
         row('Periode', medication.period),
         row('Debut', _fmt(medication.startDate)),
-        row('Fin', medication.endDate != null ? _fmt(medication.endDate!) : 'Non definie'),
-        row('Instructions', medication.instructions),
+        row(
+          'Fin',
+          medication.endDate != null
+              ? _fmt(medication.endDate!)
+              : 'Non definie',
+        ),
       ],
     );
   }
@@ -260,7 +352,82 @@ class _MedicationInfo extends StatelessWidget {
   }
 }
 
-// ── Admin action card ─────────────────────────────────────────────────────────
+class _ScheduleFollowCard extends StatelessWidget {
+  const _ScheduleFollowCard({required this.nextDose, required this.isLoading});
+
+  final ScheduledMedicationDose? nextDose;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    if (isLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+        child: LinearProgressIndicator(),
+      );
+    }
+
+    if (nextDose == null) {
+      return Text(
+        'Aucune dose planifiee a venir pour ce traitement.',
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Prochaine prise: ${_fmtDateTime(nextDose!.effectiveScheduledFor)}',
+          style: theme.textTheme.bodyLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          'Statut: ${nextDose!.statusLabelFr}',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _fmtDateTime(DateTime dt) {
+    final day = dt.day.toString().padLeft(2, '0');
+    final month = dt.month.toString().padLeft(2, '0');
+    final hour = dt.hour.toString().padLeft(2, '0');
+    final min = dt.minute.toString().padLeft(2, '0');
+    return '$day/$month/${dt.year} $hour:$min';
+  }
+}
+
+class _InstructionsCardContent extends StatelessWidget {
+  const _InstructionsCardContent({required this.instructions});
+
+  final String? instructions;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = (instructions ?? '').trim();
+    if (content.isEmpty) {
+      return Text(
+        'Aucune instruction specifique.',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+
+    return Text(content, style: Theme.of(context).textTheme.bodyMedium);
+  }
+}
 
 class _AdminActionCard extends StatelessWidget {
   const _AdminActionCard({
@@ -277,7 +444,7 @@ class _AdminActionCard extends StatelessWidget {
     final colorScheme = theme.colorScheme;
 
     return Card(
-      color: colorScheme.primaryContainer.withOpacity(0.45),
+      color: colorScheme.primaryContainer.withValues(alpha: 0.45),
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.md),
         child: Row(
@@ -289,7 +456,7 @@ class _AdminActionCard extends StatelessWidget {
             const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Text(
-                'Vous etes administrateur. Vous pouvez valider les prises.',
+                'Validation rapide des prises (mode administrateur).',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: colorScheme.onPrimaryContainer,
                 ),
@@ -314,8 +481,6 @@ class _AdminActionCard extends StatelessWidget {
   }
 }
 
-// ── Intake row ────────────────────────────────────────────────────────────────
-
 class _IntakeRow extends StatelessWidget {
   const _IntakeRow({required this.intake});
 
@@ -326,9 +491,12 @@ class _IntakeRow extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isTaken = intake.isTaken;
-    final statusColor = isTaken ? Colors.green.shade700 : Colors.orange.shade700;
-    final statusIcon =
-        isTaken ? Icons.check_circle_outline : Icons.cancel_outlined;
+    final statusColor = isTaken
+        ? Colors.green.shade700
+        : Colors.orange.shade700;
+    final statusIcon = isTaken
+        ? Icons.check_circle_outline
+        : Icons.cancel_outlined;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
@@ -376,8 +544,6 @@ class _IntakeRow extends StatelessWidget {
     return '$day/$month/${dt.year} $hour:$min';
   }
 }
-
-// ── Empty intakes ─────────────────────────────────────────────────────────────
 
 class _EmptyIntakes extends StatelessWidget {
   const _EmptyIntakes();

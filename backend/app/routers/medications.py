@@ -31,17 +31,11 @@ def _ensure_patient_access(
 
 @router.post("/", response_model=schemas.Medication, status_code=status.HTTP_201_CREATED)
 def create_medication(
-    payload: schemas.MedicationCreate,
+    payload: schemas.MedicationDoctorCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     _ensure_doctor_role(current_user)
-
-    if payload.doctor_id is not None and payload.doctor_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="doctor_id must match the authenticated doctor",
-        )
 
     patient = cruds.get_patient(db, payload.patient_id)
     if patient is None:
@@ -76,8 +70,11 @@ def create_medication(
             )
 
     try:
-        payload_for_create = payload.model_copy(update={"doctor_id": current_user.id})
-        return cruds.create_medication(db=db, payload=payload_for_create)
+        return cruds.create_medication(
+            db=db,
+            payload=payload,
+            doctor_id=current_user.id,
+        )
     except cruds.BusinessRuleError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     except IntegrityError:

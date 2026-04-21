@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -9,7 +9,7 @@ class PatientBase(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     birth_date: date
-    cin: str = Field(min_length=3, max_length=50)
+    cin: str = Field(min_length=3, max_length=20)
 
 
 class PatientCreate(PatientBase):
@@ -27,7 +27,7 @@ class PatientUpdate(BaseModel):
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     birth_date: date | None = None
-    cin: str | None = Field(default=None, min_length=3, max_length=50)
+    cin: str | None = Field(default=None, min_length=3, max_length=20)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -35,16 +35,28 @@ UserRole = Literal["doctor", "family"]
 FamilyAccessRole = Literal["admin", "viewer"]
 AppointmentStatus = Literal["scheduled", "done", "cancelled", "missed"]
 PrescriptionStatus = Literal["active", "completed", "cancelled"]
-MedicationStatus = Literal["active", "completed", "cancelled"]
-MedicationIntakeStatus = Literal["taken", "missed"]
-AllergySeverity = str  # Changed from Literal to str to prevent 500 validation errors on legacy data
+MedicationStatus = Literal["active", "completed", "stopped"]
+MedicationScheduleMode = Literal["fixed_times", "default_times", "distributed"]
+MedicationIntakeStatus = Literal["taken", "missed", "skipped", "rescheduled"]
+ScheduledDoseStatus = Literal[
+    "pending",
+    "taken",
+    "missed",
+    "skipped",
+    "rescheduled",
+    "cancelled",
+]
+ScheduledDoseValidationMethod = Literal["manual", "auto", "system"]
+DoseNotificationChannel = Literal["local", "push"]
+DoseNotificationStatus = Literal["pending", "sent", "failed", "cancelled"]
+AllergySeverity = str
 
 
 class UserBase(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
-    cin: str = Field(min_length=3, max_length=50)
-    email: str = Field(min_length=3, max_length=255)
+    cin: str = Field(min_length=3, max_length=20)
+    email: str = Field(min_length=3, max_length=150)
     role: UserRole
 
 
@@ -66,27 +78,27 @@ class LoginRequest(BaseModel):
 class RegisterDoctorRequest(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
-    cin: str = Field(min_length=3, max_length=50)
-    email: str = Field(min_length=3, max_length=255)
+    cin: str = Field(min_length=3, max_length=20)
+    email: str = Field(min_length=3, max_length=150)
     password: str = Field(min_length=6, max_length=128)
 
 
 class RegisterFamilyRequest(RegisterDoctorRequest):
-    patient_cin: str = Field(min_length=3, max_length=50)
+    patient_cin: str = Field(min_length=3, max_length=20)
     family_role: FamilyAccessRole
-    relation_to_patient: str = Field(min_length=1, max_length=100)
+    relation_to_patient: str = Field(min_length=1, max_length=30)
 
 
 class RegisterLegacyRequest(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
-    cin: str = Field(min_length=3, max_length=50)
-    email: str = Field(min_length=3, max_length=255)
+    cin: str = Field(min_length=3, max_length=20)
+    email: str = Field(min_length=3, max_length=150)
     password: str = Field(min_length=6, max_length=128)
     role: UserRole
-    patient_cin: str | None = Field(default=None, min_length=3, max_length=50)
+    patient_cin: str | None = Field(default=None, min_length=3, max_length=20)
     family_role: FamilyAccessRole | None = None
-    relation_to_patient: str | None = Field(default=None, min_length=1, max_length=100)
+    relation_to_patient: str | None = Field(default=None, min_length=1, max_length=30)
 
 
 class TokenUser(BaseModel):
@@ -122,14 +134,14 @@ class FamilyPatientLinkCreate(BaseModel):
     user_id: int
     patient_id: int
     family_role: FamilyAccessRole = "viewer"
-    relation_to_patient: str = Field(default="unspecified", min_length=1, max_length=100)
+    relation_to_patient: str = Field(default="unspecified", min_length=1, max_length=30)
 
 
 class FamilyPatientLink(BaseModel):
     user_id: int
     patient_id: int
     family_role: FamilyAccessRole
-    relation_to_patient: str
+    relation_to_patient: str | None = None
     created_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -207,34 +219,69 @@ class Prescription(BaseModel):
 
 
 class MedicationCreateItem(BaseModel):
-    """Single medication line inside a with-items payload (no patient_id/doctor_id)."""
-
-    name: str = Field(min_length=1, max_length=255)
-    dosage: str = Field(min_length=1, max_length=255)
-    form: str | None = Field(default=None, min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=150)
+    dosage: str = Field(min_length=1, max_length=100)
+    form: str | None = Field(default=None, min_length=1, max_length=50)
     quantity: str | None = Field(default=None, min_length=1, max_length=100)
-    frequency: str = Field(min_length=1, max_length=255)
-    period: str | None = Field(default=None, min_length=1, max_length=255)
+    frequency: str = Field(min_length=1, max_length=100)
+    period: str | None = Field(default=None, min_length=1, max_length=100)
     start_date: date
     end_date: date | None = None
     instructions: str | None = Field(default=None, max_length=5000)
     status: MedicationStatus = "active"
+    intake_count_per_day: int | None = Field(default=None, gt=0)
+    duration_days: int | None = Field(default=None, gt=0)
+    schedule_mode: MedicationScheduleMode | None = "default_times"
+    day_start_time: time | None = None
+    day_end_time: time | None = None
+    specific_times: list[time] | None = Field(default=None, min_length=1)
+    allow_family_adjustment: bool = True
+    is_as_needed: bool = False
 
     @model_validator(mode="after")
-    def validate_date_range(self):
+    def validate_dates_and_window(self):
+        if self.end_date is not None and self.end_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        if (
+            self.day_start_time is not None
+            and self.day_end_time is not None
+            and self.day_end_time <= self.day_start_time
+        ):
+            raise ValueError("day_end_time must be strictly after day_start_time")
+        return self
+
+
+class MedicationDoctorInputBase(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    dosage: str = Field(min_length=1, max_length=100)
+    form: str | None = Field(default=None, min_length=1, max_length=50)
+    quantity: str | None = Field(default=None, min_length=1, max_length=100)
+    frequency: str = Field(min_length=1, max_length=100)
+    period: str | None = Field(default=None, min_length=1, max_length=100)
+    duration: str | None = Field(default=None, min_length=1, max_length=100)
+    start_date: date
+    end_date: date | None = None
+    instructions: str | None = Field(default=None, max_length=5000)
+    is_as_needed: bool = False
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_dates(self):
         if self.end_date is not None and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
         return self
 
 
-class PrescriptionWithItemsCreate(BaseModel):
-    """Atomic payload: ordonnance + liste de médicaments en une seule requête."""
+class MedicationDoctorCreateItem(MedicationDoctorInputBase):
+    pass
 
+
+class PrescriptionWithItemsCreate(BaseModel):
     patient_id: int = Field(gt=0)
     prescription_date: date | None = None
     notes: str | None = Field(default=None, max_length=5000)
     status: PrescriptionStatus = "active"
-    medications: list[MedicationCreateItem] = Field(min_length=1)
+    medications: list[MedicationDoctorCreateItem] = Field(min_length=1)
 
 
 class PrescriptionWithItemsResponse(BaseModel):
@@ -247,21 +294,35 @@ class MedicationBase(BaseModel):
     prescription_id: int | None = Field(default=None, gt=0)
     patient_id: int = Field(gt=0)
     doctor_id: int | None = Field(default=None, gt=0)
-    name: str = Field(min_length=1, max_length=255)
-    dosage: str = Field(min_length=1, max_length=255)
-    form: str | None = Field(default=None, min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=150)
+    dosage: str = Field(min_length=1, max_length=100)
+    form: str | None = Field(default=None, min_length=1, max_length=50)
     quantity: str | None = Field(default=None, min_length=1, max_length=100)
-    frequency: str = Field(min_length=1, max_length=255)
-    period: str | None = Field(default=None, min_length=1, max_length=255)
+    frequency: str = Field(min_length=1, max_length=100)
+    period: str | None = Field(default=None, min_length=1, max_length=100)
     start_date: date
     end_date: date | None = None
     instructions: str | None = Field(default=None, max_length=5000)
     status: MedicationStatus = "active"
+    intake_count_per_day: int | None = Field(default=None, gt=0)
+    duration_days: int | None = Field(default=None, gt=0)
+    schedule_mode: MedicationScheduleMode | None = "default_times"
+    day_start_time: time | None = None
+    day_end_time: time | None = None
+    specific_times: list[time] | None = Field(default=None, min_length=1)
+    allow_family_adjustment: bool = True
+    is_as_needed: bool = False
 
     @model_validator(mode="after")
-    def validate_date_range(self):
+    def validate_dates_and_window(self):
         if self.end_date is not None and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
+        if (
+            self.day_start_time is not None
+            and self.day_end_time is not None
+            and self.day_end_time <= self.day_start_time
+        ):
+            raise ValueError("day_end_time must be strictly after day_start_time")
         return self
 
 
@@ -269,35 +330,55 @@ class MedicationCreate(MedicationBase):
     pass
 
 
+class MedicationDoctorCreate(MedicationDoctorInputBase):
+    patient_id: int = Field(gt=0)
+    prescription_id: int | None = Field(default=None, gt=0)
+
+
 class MedicationUpdate(BaseModel):
     prescription_id: int | None = Field(default=None, gt=0)
     patient_id: int | None = Field(default=None, gt=0)
     doctor_id: int | None = Field(default=None, gt=0)
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    dosage: str | None = Field(default=None, min_length=1, max_length=255)
-    form: str | None = Field(default=None, min_length=1, max_length=100)
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    dosage: str | None = Field(default=None, min_length=1, max_length=100)
+    form: str | None = Field(default=None, min_length=1, max_length=50)
     quantity: str | None = Field(default=None, min_length=1, max_length=100)
-    frequency: str | None = Field(default=None, min_length=1, max_length=255)
-    period: str | None = Field(default=None, min_length=1, max_length=255)
+    frequency: str | None = Field(default=None, min_length=1, max_length=100)
+    period: str | None = Field(default=None, min_length=1, max_length=100)
     start_date: date | None = None
     end_date: date | None = None
     instructions: str | None = Field(default=None, max_length=5000)
     status: MedicationStatus | None = None
+    intake_count_per_day: int | None = Field(default=None, gt=0)
+    duration_days: int | None = Field(default=None, gt=0)
+    schedule_mode: MedicationScheduleMode | None = None
+    day_start_time: time | None = None
+    day_end_time: time | None = None
+    specific_times: list[time] | None = Field(default=None, min_length=1)
+    allow_family_adjustment: bool | None = None
+    is_as_needed: bool | None = None
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
-    def validate_date_range(self):
+    def validate_dates_and_window(self):
         if (
             self.start_date is not None
             and self.end_date is not None
             and self.end_date < self.start_date
         ):
             raise ValueError("end_date must be on or after start_date")
+        if (
+            self.day_start_time is not None
+            and self.day_end_time is not None
+            and self.day_end_time <= self.day_start_time
+        ):
+            raise ValueError("day_end_time must be strictly after day_start_time")
         return self
 
 
 class Medication(MedicationBase):
     id: int
+    prescribed_at: datetime | None = None
     created_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -305,23 +386,35 @@ class Medication(MedicationBase):
 class MedicationSummary(BaseModel):
     id: int
     prescription_id: int | None = None
-    patient_id: int
-    doctor_id: int
+    patient_id: int | None = None
+    doctor_id: int | None = None
     name: str
-    dosage: str
+    dosage: str | None = None
     form: str | None = None
     quantity: str | None = None
-    frequency: str
+    frequency: str | None = None
     period: str | None = None
-    start_date: date
+    start_date: date | None = None
     end_date: date | None = None
     instructions: str | None = None
     status: MedicationStatus
+    intake_count_per_day: int | None = None
+    duration_days: int | None = None
+    schedule_mode: MedicationScheduleMode | None = None
+    day_start_time: time | None = None
+    day_end_time: time | None = None
+    specific_times: list[time] | None = None
+    allow_family_adjustment: bool | None = None
+    is_as_needed: bool | None = None
+    prescribed_at: datetime | None = None
+    created_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
 class MedicationIntakeBase(BaseModel):
     medication_id: int = Field(gt=0)
+    scheduled_dose_id: int | None = Field(default=None, gt=0)
+    scheduled_for: datetime | None = None
     taken_at: datetime = Field(default_factory=datetime.utcnow)
     status: MedicationIntakeStatus
     comment: str | None = Field(default=None, max_length=5000)
@@ -331,10 +424,253 @@ class MedicationIntakeCreate(MedicationIntakeBase):
     pass
 
 
+class MedicationIntakeUpdate(BaseModel):
+    medication_id: int | None = Field(default=None, gt=0)
+    scheduled_dose_id: int | None = Field(default=None, gt=0)
+    scheduled_for: datetime | None = None
+    taken_at: datetime | None = None
+    status: MedicationIntakeStatus | None = None
+    comment: str | None = Field(default=None, max_length=5000)
+    model_config = ConfigDict(extra="forbid")
+
+
 class MedicationIntake(MedicationIntakeBase):
     id: int
     validated_by: int | None = None
+    created_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class MedicationScheduleTemplateBase(BaseModel):
+    morning_time: time = time(8, 0)
+    noon_time: time = time(13, 0)
+    evening_time: time = time(20, 0)
+    day_start_time: time = time(8, 0)
+    day_end_time: time = time(23, 0)
+    reminder_offset_minutes: int = Field(default=10, ge=0, le=1440)
+    allow_family_adjustment: bool = True
+    is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_day_window(self):
+        if self.day_end_time <= self.day_start_time:
+            raise ValueError("day_end_time must be strictly after day_start_time")
+        return self
+
+
+class MedicationScheduleTemplateCreate(MedicationScheduleTemplateBase):
+    patient_id: int = Field(gt=0)
+    created_by: int | None = Field(default=None, gt=0)
+
+
+class MedicationScheduleTemplateUpdate(BaseModel):
+    morning_time: time | None = None
+    noon_time: time | None = None
+    evening_time: time | None = None
+    day_start_time: time | None = None
+    day_end_time: time | None = None
+    reminder_offset_minutes: int | None = Field(default=None, ge=0, le=1440)
+    allow_family_adjustment: bool | None = None
+    is_active: bool | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_day_window(self):
+        if (
+            self.day_start_time is not None
+            and self.day_end_time is not None
+            and self.day_end_time <= self.day_start_time
+        ):
+            raise ValueError("day_end_time must be strictly after day_start_time")
+        return self
+
+
+class MedicationScheduleTemplate(MedicationScheduleTemplateBase):
+    id: int
+    patient_id: int
+    created_by: int | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DoseNotificationBase(BaseModel):
+    scheduled_dose_id: int = Field(gt=0)
+    patient_id: int = Field(gt=0)
+    recipient_user_id: int | None = Field(default=None, gt=0)
+    channel: DoseNotificationChannel = "local"
+    send_at: datetime
+    status: DoseNotificationStatus = "pending"
+    error_message: str | None = Field(default=None, max_length=5000)
+
+
+class DoseNotificationCreate(DoseNotificationBase):
+    pass
+
+
+class DoseNotificationUpdate(BaseModel):
+    recipient_user_id: int | None = Field(default=None, gt=0)
+    channel: DoseNotificationChannel | None = None
+    send_at: datetime | None = None
+    sent_at: datetime | None = None
+    status: DoseNotificationStatus | None = None
+    error_message: str | None = Field(default=None, max_length=5000)
+    model_config = ConfigDict(extra="forbid")
+
+
+class DoseNotification(DoseNotificationBase):
+    id: int
+    sent_at: datetime | None = None
+    created_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ScheduledMedicationDoseBase(BaseModel):
+    patient_id: int = Field(gt=0)
+    medication_id: int = Field(gt=0)
+    prescription_id: int | None = Field(default=None, gt=0)
+    scheduled_date: date
+    scheduled_time: time
+    scheduled_for: datetime
+    period_label: str | None = Field(default=None, max_length=30)
+    status: ScheduledDoseStatus = "pending"
+    original_scheduled_for: datetime | None = None
+    rescheduled_for: datetime | None = None
+    taken_at: datetime | None = None
+    validated_by: int | None = Field(default=None, gt=0)
+    validation_method: ScheduledDoseValidationMethod | None = "manual"
+    skipped_reason: str | None = Field(default=None, max_length=5000)
+    notes: str | None = Field(default=None, max_length=5000)
+
+
+class ScheduledMedicationDoseCreate(ScheduledMedicationDoseBase):
+    pass
+
+
+class ScheduledMedicationDoseUpdate(BaseModel):
+    patient_id: int | None = Field(default=None, gt=0)
+    medication_id: int | None = Field(default=None, gt=0)
+    prescription_id: int | None = Field(default=None, gt=0)
+    scheduled_date: date | None = None
+    scheduled_time: time | None = None
+    scheduled_for: datetime | None = None
+    period_label: str | None = Field(default=None, max_length=30)
+    status: ScheduledDoseStatus | None = None
+    original_scheduled_for: datetime | None = None
+    rescheduled_for: datetime | None = None
+    taken_at: datetime | None = None
+    validated_by: int | None = Field(default=None, gt=0)
+    validation_method: ScheduledDoseValidationMethod | None = None
+    skipped_reason: str | None = Field(default=None, max_length=5000)
+    notes: str | None = Field(default=None, max_length=5000)
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScheduledMedicationDose(ScheduledMedicationDoseBase):
+    id: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ScheduledMedicationDoseWithMedication(ScheduledMedicationDose):
+    medication: MedicationSummary | None = None
+
+
+class ScheduledMedicationDoseDetail(ScheduledMedicationDoseWithMedication):
+    intakes: list[MedicationIntake] = Field(default_factory=list)
+    notifications: list[DoseNotification] = Field(default_factory=list)
+
+
+class ScheduledDoseTakeAction(BaseModel):
+    taken_at: datetime | None = None
+    validation_method: ScheduledDoseValidationMethod = "manual"
+    notes: str | None = Field(default=None, max_length=5000)
+    comment: str | None = Field(default=None, max_length=5000)
+    create_intake_log: bool = True
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScheduledDoseMissAction(BaseModel):
+    missed_at: datetime | None = None
+    validation_method: ScheduledDoseValidationMethod = "manual"
+    notes: str | None = Field(default=None, max_length=5000)
+    comment: str | None = Field(default=None, max_length=5000)
+    create_intake_log: bool = True
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScheduledDoseSkipAction(BaseModel):
+    skipped_reason: str = Field(min_length=1, max_length=5000)
+    skipped_at: datetime | None = None
+    validation_method: ScheduledDoseValidationMethod = "manual"
+    notes: str | None = Field(default=None, max_length=5000)
+    comment: str | None = Field(default=None, max_length=5000)
+    create_intake_log: bool = True
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScheduledDoseRescheduleAction(BaseModel):
+    rescheduled_for: datetime
+    reason: str | None = Field(default=None, max_length=5000)
+    notes: str | None = Field(default=None, max_length=5000)
+    validation_method: ScheduledDoseValidationMethod = "manual"
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScheduledDoseCancelAction(BaseModel):
+    reason: str | None = Field(default=None, max_length=5000)
+    notes: str | None = Field(default=None, max_length=5000)
+    model_config = ConfigDict(extra="forbid")
+
+
+class ScheduledDoseActionResult(BaseModel):
+    dose: ScheduledMedicationDose
+    intake: MedicationIntake | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DoseStatusCounts(BaseModel):
+    pending: int = 0
+    taken: int = 0
+    missed: int = 0
+    skipped: int = 0
+    rescheduled: int = 0
+    cancelled: int = 0
+    total: int = 0
+
+
+class DayPlanningRead(BaseModel):
+    patient_id: int
+    date: date
+    doses: list[ScheduledMedicationDoseWithMedication] = Field(default_factory=list)
+    counts: DoseStatusCounts = Field(default_factory=DoseStatusCounts)
+
+
+class PlanningDayBucket(BaseModel):
+    date: date
+    doses: list[ScheduledMedicationDoseWithMedication] = Field(default_factory=list)
+    counts: DoseStatusCounts = Field(default_factory=DoseStatusCounts)
+
+
+class DateRangePlanningRead(BaseModel):
+    patient_id: int
+    start_date: date
+    end_date: date
+    days: list[PlanningDayBucket] = Field(default_factory=list)
+    counts: DoseStatusCounts = Field(default_factory=DoseStatusCounts)
+
+
+class DateRangePlanningQuery(BaseModel):
+    patient_id: int = Field(gt=0)
+    start_date: date
+    end_date: date
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        return self
 
 
 class PatientAllergyCreate(BaseModel):
@@ -508,3 +844,9 @@ class MedicalNote(BaseModel):
     note: str
     created_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
+
+
+PrescriptionWithItemsResponse.model_rebuild()
+ScheduledMedicationDoseWithMedication.model_rebuild()
+ScheduledMedicationDoseDetail.model_rebuild()
+ScheduledDoseActionResult.model_rebuild()

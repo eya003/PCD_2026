@@ -58,7 +58,7 @@ class FamilyService {
       effectivePatientId = patients.first.id;
     }
 
-    final members = await fetchFamilyMembers(patientId: effectivePatientId!);
+    final members = await fetchFamilyMembers(patientId: effectivePatientId);
     for (final member in members) {
       if (member.userId == userId) {
         final role = member.familyRole.trim().toLowerCase();
