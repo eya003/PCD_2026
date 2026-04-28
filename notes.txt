@@ -3,7 +3,11 @@ cd backend
 venv\Scripts\activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 http://127.0.0.1:8000/docs
-2) Relancer le Frontend
+2) Relancer le front web
+cd F:\pcd\web
+npm run dev
+http://localhost:5173/
+3) Relancer le Frontend
 cd mobile/pcd_app
 flutter run -d chrome
 

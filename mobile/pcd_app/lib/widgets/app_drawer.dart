@@ -10,12 +10,14 @@ class AppDrawer extends StatelessWidget {
     required this.currentIndex,
     required this.email,
     required this.onSelectIndex,
+    required this.onOpenAboutApp,
     required this.onLogout,
   });
 
   final int currentIndex;
   final String email;
   final ValueChanged<int> onSelectIndex;
+  final VoidCallback onOpenAboutApp;
   final Future<void> Function() onLogout;
 
   @override
@@ -73,6 +75,12 @@ class AppDrawer extends StatelessWidget {
                 onTap: () => onSelectIndex(2),
               ),
               _DrawerItem(
+                selected: false,
+                icon: Icons.info_outline,
+                label: 'À propos de l’application',
+                onTap: onOpenAboutApp,
+              ),
+              _DrawerItem(
                 selected: currentIndex == 3,
                 icon: Icons.person_outline,
                 label: 'Profil',
@@ -111,7 +119,7 @@ class _DrawerItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final selectedColor = AppColors.primaryBlue.withOpacity(0.10);
+    final selectedColor = AppColors.primaryBlue.withValues(alpha: 0.10);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.xs),

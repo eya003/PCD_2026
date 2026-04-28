@@ -12,8 +12,6 @@ import '../../services/appointments_service.dart';
 import '../../services/treatments_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
-import '../../utils/prescription_print_models.dart';
-import '../../utils/prescription_printer.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/section_card.dart';
 import '../../widgets/status_badge.dart';
@@ -365,8 +363,6 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
         medications: medications,
         patient: widget.patient,
         doctorName: doctorName,
-        canPrint: _isDoctor,
-        onPrint: () => _printPrescriptionDetails(prescription, medications),
         formatDate: _formatDate,
       ),
     );
@@ -388,57 +384,6 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
         formatDateTime: _formatDateTime,
       ),
     );
-  }
-
-  Future<void> _printPrescriptionDetails(
-    Prescription prescription,
-    List<Medication> medications,
-  ) async {
-    final doctorName =
-        _doctorNameForId(prescription.doctorId) ??
-        'Medecin #${prescription.doctorId}';
-    final payload = PrescriptionPrintPayload(
-      doctorDisplayName: _formatDoctorForPrint(doctorName),
-      patientFullName: widget.patient.fullName,
-      patientCode: widget.patient.code,
-      patientCin: widget.patient.cin,
-      patientAgeLabel: '${widget.patient.age} ans',
-      prescriptionNumber: '#${prescription.id}',
-      prescriptionDate: _formatDate(prescription.prescriptionDate),
-      prescriptionStatus: prescription.statusLabelFr,
-      prescriptionNotes: prescription.notes,
-      medications: medications
-          .map(
-            (item) => PrescriptionPrintMedication(
-              name: item.name,
-              dosage: item.dosage,
-              frequency: item.frequency,
-              quantity: item.quantity,
-              period: item.period,
-              form: item.form,
-              startDate: _formatDate(item.startDate),
-              endDate: item.endDate == null ? null : _formatDate(item.endDate!),
-              instructions: item.instructions,
-            ),
-          )
-          .toList(),
-    );
-
-    final printed = await printPrescription(payload);
-    if (!mounted) return;
-    if (!printed) {
-      _showSnackBar(
-        'Impression indisponible sur cette plateforme. Utilisez la version web.',
-      );
-    }
-  }
-
-  String _formatDoctorForPrint(String name) {
-    final clean = name.trim();
-    if (clean.toLowerCase().startsWith('dr')) {
-      return clean;
-    }
-    return 'Dr. $clean';
   }
 
   void _notifyAppointmentsChanged() {
@@ -642,7 +587,7 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
                   width: 46,
                   height: 46,
                   decoration: BoxDecoration(
-                    color: AppColors.primaryBlue.withOpacity(0.1),
+                    color: AppColors.primaryBlue.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: const Icon(
@@ -1014,7 +959,7 @@ class _SubSectionHeader extends StatelessWidget {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: AppColors.primaryBlue.withOpacity(0.08),
+            color: AppColors.primaryBlue.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Icon(icon, color: AppColors.primaryBlue, size: 20),
@@ -1410,9 +1355,11 @@ class _ArchivedMedicationCard extends StatelessWidget {
                       vertical: 6,
                     ),
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
+                      color: statusColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: statusColor.withOpacity(0.3)),
+                      border: Border.all(
+                        color: statusColor.withValues(alpha: 0.3),
+                      ),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -1562,26 +1509,26 @@ class _AllergyCard extends StatelessWidget {
     switch (severity) {
       case PatientAllergy.severityLow:
         return (
-          AppColors.statusGreen.withOpacity(0.12),
+          AppColors.statusGreen.withValues(alpha: 0.12),
           AppColors.statusGreen,
           Icons.shield_outlined,
         );
       case PatientAllergy.severityHigh:
         return (
-          AppColors.statusOrange.withOpacity(0.15),
+          AppColors.statusOrange.withValues(alpha: 0.15),
           AppColors.statusOrange,
           Icons.priority_high_rounded,
         );
       case PatientAllergy.severityCritical:
         return (
-          AppColors.statusRed.withOpacity(0.12),
+          AppColors.statusRed.withValues(alpha: 0.12),
           AppColors.statusRed,
           Icons.warning_amber_rounded,
         );
       case PatientAllergy.severityModerate:
       default:
         return (
-          AppColors.primaryBlue.withOpacity(0.1),
+          AppColors.primaryBlue.withValues(alpha: 0.1),
           AppColors.primaryBlue,
           Icons.report_problem_outlined,
         );
@@ -1624,7 +1571,7 @@ class _AppointmentListTile extends StatelessWidget {
               width: 34,
               height: 34,
               decoration: BoxDecoration(
-                color: AppColors.primaryBlue.withOpacity(0.1),
+                color: AppColors.primaryBlue.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: const Icon(
@@ -1966,8 +1913,6 @@ class _PrescriptionDetailsDialog extends StatelessWidget {
     required this.medications,
     required this.patient,
     required this.doctorName,
-    required this.canPrint,
-    required this.onPrint,
     required this.formatDate,
   });
 
@@ -1975,8 +1920,6 @@ class _PrescriptionDetailsDialog extends StatelessWidget {
   final List<Medication> medications;
   final PatientSummary patient;
   final String doctorName;
-  final bool canPrint;
-  final Future<void> Function() onPrint;
   final String Function(DateTime date) formatDate;
 
   @override
@@ -2106,12 +2049,6 @@ class _PrescriptionDetailsDialog extends StatelessWidget {
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text('Fermer'),
                   ),
-                  if (canPrint)
-                    OutlinedButton.icon(
-                      onPressed: () => onPrint(),
-                      icon: const Icon(Icons.print_outlined),
-                      label: const Text('Imprimer'),
-                    ),
                 ],
               ),
             ),
@@ -2332,7 +2269,7 @@ class _AddAllergyDialogState extends State<_AddAllergyDialog> {
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   DropdownButtonFormField<String>(
-                    value: _severity,
+                    initialValue: _severity,
                     items: const [
                       DropdownMenuItem(
                         value: PatientAllergy.severityLow,

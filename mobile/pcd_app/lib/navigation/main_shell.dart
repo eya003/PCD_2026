@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/user_role.dart';
 import '../screens/ai/ai_module_screen.dart';
+import '../screens/about/about_app_page.dart';
 import '../screens/create_patient_screen.dart';
 import '../screens/dashboard/dashboard_screen.dart';
 import '../screens/patients/patients_screen.dart';
@@ -86,6 +87,14 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
+  Future<void> _openAboutAppPage() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const AboutAppPage(),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _patientsRevision.dispose();
@@ -146,6 +155,7 @@ class _MainShellState extends State<MainShell> {
         currentIndex: _selectedIndex,
         email: widget.email,
         onSelectIndex: _setTab,
+        onOpenAboutApp: _openAboutAppPage,
         onLogout: widget.onLogout,
       ),
       body: SafeArea(
