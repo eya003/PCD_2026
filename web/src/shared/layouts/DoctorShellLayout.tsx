@@ -20,7 +20,7 @@ const doctorDrawerNavItems: NavItem[] = [
   { key: 'patients', label: 'Patients', to: '/patients' },
   { key: 'ai', label: 'Module IA', to: '/ai' },
   { key: 'about-app', label: 'À propos de l’application', to: '/about-app' },
-  { key: 'about-alzheimer', label: 'A propos d Alzheimer', to: '/about-alzheimer' },
+  { key: 'about-alzheimer', label: 'À propos d’Alzheimer', to: '/about-alzheimer' },
   { key: 'profile', label: 'Profil', to: '/profile' },
 ]
 

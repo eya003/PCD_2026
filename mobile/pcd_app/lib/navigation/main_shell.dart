@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/user_role.dart';
 import '../screens/ai/ai_module_screen.dart';
+import '../screens/about/about_alzheimer_page.dart';
 import '../screens/about/about_app_page.dart';
 import '../screens/create_patient_screen.dart';
 import '../screens/dashboard/dashboard_screen.dart';
@@ -95,6 +96,14 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  Future<void> _openAboutAlzheimerPage() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const AboutAlzheimerPage(),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _patientsRevision.dispose();
@@ -156,6 +165,7 @@ class _MainShellState extends State<MainShell> {
         email: widget.email,
         onSelectIndex: _setTab,
         onOpenAboutApp: _openAboutAppPage,
+        onOpenAboutAlzheimer: _openAboutAlzheimerPage,
         onLogout: widget.onLogout,
       ),
       body: SafeArea(

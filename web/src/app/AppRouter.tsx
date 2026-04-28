@@ -5,6 +5,7 @@ import { RoleRoute } from '../core/routing/RoleRoute'
 import { ProtectedRoute } from '../core/routing/ProtectedRoute'
 import { LoginPage } from '../features/auth/pages/LoginPage'
 import { DoctorAiPage } from '../features/doctor/pages/DoctorAiPage'
+import { DoctorAboutAlzheimerArticlePage } from '../features/doctor/pages/DoctorAboutAlzheimerArticlePage'
 import { DoctorAboutAlzheimerPage } from '../features/doctor/pages/DoctorAboutAlzheimerPage'
 import { DoctorAboutAppDetailPage } from '../features/doctor/pages/DoctorAboutAppDetailPage'
 import { DoctorAboutAppPage } from '../features/doctor/pages/DoctorAboutAppPage'
@@ -78,6 +79,10 @@ export function AppRouter() {
             element={<DoctorAboutAppDetailPage />}
           />
           <Route path="/about-alzheimer" element={<DoctorAboutAlzheimerPage />} />
+          <Route
+            path="/about-alzheimer/:articleId"
+            element={<DoctorAboutAlzheimerArticlePage />}
+          />
           <Route path="/profile" element={<DoctorProfilePage />} />
         </Route>
 

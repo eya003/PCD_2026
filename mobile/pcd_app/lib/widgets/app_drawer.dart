@@ -11,6 +11,7 @@ class AppDrawer extends StatelessWidget {
     required this.email,
     required this.onSelectIndex,
     required this.onOpenAboutApp,
+    required this.onOpenAboutAlzheimer,
     required this.onLogout,
   });
 
@@ -18,6 +19,7 @@ class AppDrawer extends StatelessWidget {
   final String email;
   final ValueChanged<int> onSelectIndex;
   final VoidCallback onOpenAboutApp;
+  final VoidCallback onOpenAboutAlzheimer;
   final Future<void> Function() onLogout;
 
   @override
@@ -79,6 +81,12 @@ class AppDrawer extends StatelessWidget {
                 icon: Icons.info_outline,
                 label: 'À propos de l’application',
                 onTap: onOpenAboutApp,
+              ),
+              _DrawerItem(
+                selected: false,
+                icon: Icons.psychology_outlined,
+                label: 'À propos d’Alzheimer',
+                onTap: onOpenAboutAlzheimer,
               ),
               _DrawerItem(
                 selected: currentIndex == 3,
