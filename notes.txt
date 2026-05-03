@@ -3,6 +3,12 @@ cd backend
 venv\Scripts\activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 http://127.0.0.1:8000/docs
+----docker----
+cd F:\pcd
+docker compose up
+docker compose down
+pour modifier 
+docker compose up --build
 2) Relancer le front web
 cd F:\pcd\web
 npm run dev

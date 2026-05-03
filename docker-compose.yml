@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:15
+    container_name: alzheimer_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pcd.123@!!
+      POSTGRES_DB: pcd
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pcd"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: alzheimer_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
