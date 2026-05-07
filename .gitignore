@@ -10,4 +10,36 @@ backend/.vscode/
 __pycache__/
 *.pyc
 .pytest_cache/
-pytest-cache-files-*/
+pytest-cache-files-*/*
+
+# Modèles IA lourds
+*.pth
+*.pt
+*.onnx
+backend/app/ml_models/
+
+# Fichiers médicaux / IRM
+*.nii
+*.nii.gz
+
+# Dossiers générés pendant les tests IA
+backend/storage/ai_processing/
+
+# Dossiers de sortie temporaires
+out/
+diag/
+# Flutter / mobile generated files
+mobile/pcd_app/build/
+mobile/pcd_app/.dart_tool/
+mobile/pcd_app/.flutter-plugins
+mobile/pcd_app/.flutter-plugins-dependencies
+
+# Backend virtual env
+backend/venv/
+venv/
+
+# AI large model local only
+backend/app/ml_models/
+*.pth
+*.pt
+*.onnx

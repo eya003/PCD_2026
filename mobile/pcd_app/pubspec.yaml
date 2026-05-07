@@ -31,6 +31,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
+  file_picker: ^8.1.7
   shared_preferences: ^2.2.2
   geolocator: ^13.0.2
   flutter_local_notifications: ^17.2.4

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import models
 from .database import engine
+from .routers import ai_predictions
 from .routers import (
     alerts,
     appointments,
@@ -133,4 +134,9 @@ app.include_router(
     medical_notes.router,
     prefix="/medical-notes",
     tags=["medical-notes"],
+)
+app.include_router(
+    ai_predictions.router,
+    prefix="/ai",
+    tags=["ai"],
 )

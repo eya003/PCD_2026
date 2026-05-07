@@ -46,6 +46,7 @@ import {
   AllergyFormDialog,
   type AllergyFormValues,
 } from '../components/AllergyFormDialog'
+import { PatientAiResultsCard } from '../components/PatientAiResultsCard'
 import {
   PrescriptionDetailsDialog,
 } from '../components/PrescriptionDetailsDialog'
@@ -1458,18 +1459,12 @@ export function PatientDetailsPage() {
                 setState: setAlertsState,
                 isCancelled: () => isCancelled,
               }),
-          isDoctor
-            ? (async () => {
-                if (!isCancelled) {
-                  setDiagnosesState(createLoadedSectionState<Diagnosis>([]))
-                }
-              })()
-            : loadSection<Diagnosis>({
-                fetcher: () => getPatientDiagnoses(patientId),
-                fallbackMessage: 'Impossible de charger les diagnostics.',
-                setState: setDiagnosesState,
-                isCancelled: () => isCancelled,
-              }),
+          loadSection<Diagnosis>({
+            fetcher: () => getPatientDiagnoses(patientId),
+            fallbackMessage: 'Impossible de charger les diagnostics.',
+            setState: setDiagnosesState,
+            isCancelled: () => isCancelled,
+          }),
           isDoctor
             ? (async () => {
                 if (!isCancelled) {
@@ -2936,6 +2931,15 @@ export function PatientDetailsPage() {
                   state={appointmentsState}
                 />
               </SectionCard>
+            )}
+
+            {isDoctor && (
+              <PatientAiResultsCard
+                diagnoses={diagnosesState.items}
+                doctors={patientDoctors}
+                error={diagnosesState.error}
+                isLoading={diagnosesState.isLoading}
+              />
             )}
 
             {!isDoctor && (

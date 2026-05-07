@@ -1,0 +1,2 @@
+model_name,threshold,accuracy,auc,precision_AD,recall_AD,f1_AD,specificity_CN,tn,fp,fn,tp,n_features_selected
+BernoulliNB_features_cnn_clean,0.1,0.8780487804878049,0.9761904761904762,0.8260869565217391,0.95,0.8837209302325582,0.809523809138322,17,4,1,19,12
