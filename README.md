@@ -61,3 +61,12 @@ backend/app/ml_models/final_hybrid_model/cnn/
 
 ## Sécurité
 Les fichiers `.env`, les données médicales, les fichiers IRM et les fichiers générés ne sont pas inclus dans le dépôt.
+## Remarque sur le modèle IA
+
+Le fichier du modèle CNN 3D n’est pas inclus dans le dépôt GitHub, car il est volumineux.
+
+Pour cette raison, le modèle IA est fourni séparément via un lien Google Drive.
+
+Après le téléchargement, le fichier du modèle doit être placé localement dans le dossier suivant :
+
+backend/app/ml_models/final_hybrid_model/cnn/
